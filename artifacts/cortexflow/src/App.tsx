@@ -137,11 +137,12 @@ interface ChatPanelProps {
   inputValue: string;
   setInputValue: (v: string) => void;
   onSubmit: () => void;
+  onStop: () => void;
   onResume: (id: string) => void;
 }
 const ChatPanel = memo(({
   messages, tasks, isConnected, isAgentBusy, currentStep,
-  inputValue, setInputValue, onSubmit, onResume
+  inputValue, setInputValue, onSubmit, onStop, onResume
 }: ChatPanelProps) => {
   const endRef  = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -151,8 +152,12 @@ const ChatPanel = memo(({
   }, [messages]);
 
   const handleKey = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); }
-  }, [onSubmit]);
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (isAgentBusy && !inputValue.trim()) onStop();
+      else onSubmit();
+    }
+  }, [onSubmit, onStop, isAgentBusy, inputValue]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
@@ -218,18 +223,30 @@ const ChatPanel = memo(({
             value={inputValue}
             onChange={handleChange}
             onKeyDown={handleKey}
-            placeholder="أرسل مهمة للوكيل..."
+            placeholder={isAgentBusy ? 'أرسل مهمة جديدة أو اضغط إيقاف...' : 'أرسل مهمة للوكيل...'}
             rows={1}
             className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-2xl px-4 py-3 text-slate-200 placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/40 resize-none min-h-[48px] max-h-[120px] text-sm transition-all"
             style={{ direction: 'rtl' }}
           />
-          <button
-            onClick={onSubmit}
-            disabled={!inputValue.trim() || !isConnected}
-            className="w-12 h-12 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-indigo-500/20 active:scale-95 touch-manipulation"
-          >
-            <Send size={18}/>
-          </button>
+          {/* Stop button — shown when agent is busy AND input is empty */}
+          {isAgentBusy && !inputValue.trim() ? (
+            <button
+              onClick={onStop}
+              className="w-12 h-12 bg-red-600 hover:bg-red-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-red-500/20 active:scale-95 touch-manipulation"
+              title="إيقاف المهمة"
+            >
+              <X size={18}/>
+            </button>
+          ) : (
+            <button
+              onClick={onSubmit}
+              disabled={!inputValue.trim() || !isConnected}
+              className="w-12 h-12 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-indigo-500/20 active:scale-95 touch-manipulation"
+              title={isAgentBusy ? 'أضف إلى قائمة الانتظار' : 'إرسال'}
+            >
+              {isAgentBusy ? <Loader2 size={18} className="animate-spin"/> : <Send size={18}/>}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -431,8 +448,17 @@ const BrowserPanel = memo(({ browserImgRef, browserHasFrame, isAgentBusy, onEmit
       >
         {!browserHasFrame && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600 gap-4 z-10">
-            <div className="w-14 h-14 rounded-full border-2 border-slate-800 border-t-indigo-500 animate-spin"/>
-            <p className="text-sm font-medium text-slate-600">جاري تهيئة المتصفح...</p>
+            {isAgentBusy ? (
+              <>
+                <div className="w-14 h-14 rounded-full border-2 border-slate-800 border-t-indigo-500 animate-spin"/>
+                <p className="text-sm font-medium text-slate-500">جاري تهيئة المتصفح...</p>
+              </>
+            ) : (
+              <>
+                <Monitor size={40} className="text-slate-700"/>
+                <p className="text-sm text-slate-600">أرسل مهمة لبدء تشغيل المتصفح</p>
+              </>
+            )}
           </div>
         )}
 
