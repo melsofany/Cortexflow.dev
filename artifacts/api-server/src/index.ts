@@ -22,7 +22,7 @@ const io = new SocketServer(httpServer, {
   path: "/api/socket",
 });
 
-app.use((req: any, _res, next) => {
+app.use((req: any, _res: any, next: any) => {
   req.io = io;
   next();
 });
@@ -32,9 +32,57 @@ io.on("connection", (socket) => {
 
   socket.on("submitTask", async (data) => {
     try {
-      const task = taskStore.createTask(data);
+      const task = taskStore.createTask({
+        description: data.description || data.task || "",
+        type: data.type || "browser",
+        url: data.url,
+        priority: typeof data.priority === "number" ? data.priority : 0,
+      });
+
       socket.emit("taskCreated", task);
       io.emit("taskUpdate", task);
+
+      // listen for events from this task BEFORE executing
+      const onThinking = (d: any) => {
+        if (d.taskId === task.taskId) socket.emit("thinking", d);
+      };
+      const onStart = (d: any) => {
+        if (d.taskId === task.taskId) {
+          socket.emit("taskStart", d);
+          io.emit("taskUpdate", taskStore.getTask(task.taskId));
+        }
+      };
+      const onSuccess = (d: any) => {
+        if (d.taskId === task.taskId) {
+          socket.emit("taskSuccess", d);
+          io.emit("taskUpdate", taskStore.getTask(task.taskId));
+          cleanup();
+        }
+      };
+      const onFail = (d: any) => {
+        if (d.taskId === task.taskId) {
+          socket.emit("taskFail", d);
+          io.emit("taskUpdate", taskStore.getTask(task.taskId));
+          cleanup();
+        }
+      };
+      const cleanup = () => {
+        agentRunner.off("thinking", onThinking);
+        agentRunner.off("taskStart", onStart);
+        agentRunner.off("taskSuccess", onSuccess);
+        agentRunner.off("taskFail", onFail);
+      };
+
+      agentRunner.on("thinking", onThinking);
+      agentRunner.on("taskStart", onStart);
+      agentRunner.on("taskSuccess", onSuccess);
+      agentRunner.on("taskFail", onFail);
+
+      // execute immediately
+      agentRunner.executeTask(task).catch((err: any) => {
+        socket.emit("error", { message: err.message });
+        cleanup();
+      });
     } catch (err: any) {
       socket.emit("error", { message: err.message });
     }
@@ -46,32 +94,52 @@ io.on("connection", (socket) => {
       socket.emit("error", { message: "Task not found" });
       return;
     }
+    if (task.status === "running") return;
 
-    agentRunner.on("thinking", (data) => {
-      if (data.taskId === taskId) socket.emit("thinking", data);
-    });
-    agentRunner.on("taskSuccess", (data) => {
-      if (data.taskId === taskId) {
-        socket.emit("taskSuccess", data);
+    const onThinking = (d: any) => { if (d.taskId === taskId) socket.emit("thinking", d); };
+    const onStart    = (d: any) => { if (d.taskId === taskId) socket.emit("taskStart", d); };
+    const onSuccess  = (d: any) => {
+      if (d.taskId === taskId) {
+        socket.emit("taskSuccess", d);
         io.emit("taskUpdate", taskStore.getTask(taskId));
+        cleanup();
       }
-    });
-    agentRunner.on("taskFail", (data) => {
-      if (data.taskId === taskId) {
-        socket.emit("taskFail", data);
+    };
+    const onFail = (d: any) => {
+      if (d.taskId === taskId) {
+        socket.emit("taskFail", d);
         io.emit("taskUpdate", taskStore.getTask(taskId));
+        cleanup();
       }
-    });
-    agentRunner.on("taskStart", (data) => {
-      if (data.taskId === taskId) socket.emit("taskStart", data);
-    });
+    };
+    const cleanup = () => {
+      agentRunner.off("thinking", onThinking);
+      agentRunner.off("taskStart", onStart);
+      agentRunner.off("taskSuccess", onSuccess);
+      agentRunner.off("taskFail", onFail);
+    };
+
+    agentRunner.on("thinking", onThinking);
+    agentRunner.on("taskStart", onStart);
+    agentRunner.on("taskSuccess", onSuccess);
+    agentRunner.on("taskFail", onFail);
 
     agentRunner.executeTask(task).catch(console.error);
   });
 
+  socket.on("resumeTask", async (taskId: string) => {
+    const task = taskStore.getTask(taskId);
+    if (!task) return;
+    socket.emit("taskResumed", { taskId });
+  });
+
+  socket.on("browserEvent", (_data: any) => {
+    // Browser automation placeholder - requires Playwright setup
+  });
+
   socket.on("getStatus", () => {
     const tasks = taskStore.getAllTasks();
-    const logs = taskStore.getLogs(10);
+    const logs  = taskStore.getLogs(10);
     socket.emit("status", {
       tasks,
       logs,
@@ -95,7 +163,7 @@ async function startServer() {
 
   httpServer.listen(port, () => {
     console.log(`[Server] CortexFlow running on port ${port}`);
-    console.log(`[Server] Ollama: ${ollamaClient.isAvailable() ? "✓ " + ollamaClient.getCurrentModel() : "✗ not available"}`);
+    console.log(`[Server] Ollama: ${ollamaClient.isAvailable() ? "✓ " + ollamaClient.getCurrentModel() : "✗ not available (simulation mode)"}`);
   });
 }
 
