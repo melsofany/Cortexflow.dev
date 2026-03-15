@@ -9,18 +9,22 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@workspace/db": "workspace:*",
     "@workspace/api-zod": "workspace:*",
+    "@workspace/db": "workspace:*",
+    "axios": "^1.13.6",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
-    "cookie-parser": "^1.4.7",
-    "cors": "^2"
+    "socket.io": "^4.8.3",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
-    "@types/express": "^5.0.6",
-    "@types/cors": "^2.8.19",
     "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "catalog:",
+    "@types/uuid": "^11.0.0",
     "esbuild": "^0.27.3",
     "tsx": "catalog:"
   }

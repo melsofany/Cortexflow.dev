@@ -1,15 +1,20 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 1.0.0
+  description: CortexFlow AI Agent Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: tasks
+    description: Task management
+  - name: ai
+    description: AI model operations
+  - name: logs
+    description: Execution logs
 paths:
   /healthz:
     get:
@@ -24,6 +29,135 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List all tasks
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Submit a new task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "200":
+          description: Task submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /tasks/{taskId}:
+    get:
+      operationId: getTask
+      tags: [tasks]
+      summary: Get task status
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /tasks/{taskId}/execute:
+    post:
+      operationId: executeTask
+      tags: [tasks]
+      summary: Execute a submitted task
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Execution started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+  /ai/models:
+    get:
+      operationId: listModels
+      tags: [ai]
+      summary: List available AI models
+      responses:
+        "200":
+          description: Available models
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelsResponse"
+  /ai/chat:
+    post:
+      operationId: aiChat
+      tags: [ai]
+      summary: Chat with AI model
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: AI response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+  /logs:
+    get:
+      operationId: getLogs
+      tags: [logs]
+      summary: Get execution logs
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Execution logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LogEntry"
 components:
   schemas:
     HealthStatus:
@@ -31,6 +165,135 @@ components:
       properties:
         status:
           type: string
+        ollamaAvailable:
+          type: boolean
+        activeModel:
+          type: string
       required:
         - status
-
+    Task:
+      type: object
+      properties:
+        taskId:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        priority:
+          type: integer
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        result:
+          type: string
+        error:
+          type: string
+      required:
+        - taskId
+        - description
+        - type
+        - status
+    CreateTaskRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        type:
+          type: string
+          enum: [browser, system, ai, research]
+        url:
+          type: string
+        priority:
+          type: integer
+      required:
+        - description
+        - type
+    ModelsResponse:
+      type: object
+      properties:
+        activeProvider:
+          type: string
+        ollamaAvailable:
+          type: boolean
+        availableModels:
+          type: array
+          items:
+            type: string
+        currentModel:
+          type: string
+      required:
+        - activeProvider
+        - ollamaAvailable
+        - availableModels
+    ChatRequest:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        model:
+          type: string
+        temperature:
+          type: number
+      required:
+        - messages
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+      required:
+        - role
+        - content
+    ChatResponse:
+      type: object
+      properties:
+        content:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+      required:
+        - content
+        - model
+        - provider
+    LogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        taskId:
+          type: string
+        agentType:
+          type: string
+        action:
+          type: string
+        input:
+          type: string
+        output:
+          type: string
+        durationMs:
+          type: integer
+        createdAt:
+          type: string
+      required:
+        - id
+        - action
+        - createdAt
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error

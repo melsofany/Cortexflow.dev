@@ -1,0 +1,16 @@
+packages:
+  "framer-motion": "For fluid UI animations, micro-interactions, and step transitions"
+  "socket.io-client": "Real-time WebSocket communication for task events and streaming logs"
+  "date-fns": "For precise date and time formatting in terminal logs and task history"
+  "clsx": "Utility for conditionally concatenating class names"
+  "tailwind-merge": "Utility for merging Tailwind classes safely"
+  "@tanstack/react-query": "Data fetching and caching for REST API endpoints"
+
+images:
+  - path: "artifacts/cortexflow/public/images/cortex-bg.png"
+    description: "Deep dark cyberpunk grid background with subtle cyan and violet glowing nodes, highly abstract and minimal, premium dark technology feel"
+    aspect_ratio: "16:9"
+
+notes:
+  - WebSocket connects to / via socket.io for real-time logs, thinking streams, and task lifecycle events.
+  - Using generated OpenAPI React Query hooks from @workspace/api-client-react.
