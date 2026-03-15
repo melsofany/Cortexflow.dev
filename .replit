@@ -67,7 +67,3 @@ packages = ["ollama"]
 [userenv]
 
 [userenv.shared]
-OCI_USER_OCID = "ocid1.user.oc1..aaaaaaaayqj7tjzvdkvymvv2do7ndz324r4n6gignuhiq2kkyblrkaxhf2la"
-OCI_TENANCY_OCID = "ocid1.tenancy.oc1..aaaaaaaagekaiac5ly7qes3b5jfupqfxsh2vt4fwtks4xbjumkap7o2vcdkq"
-OCI_FINGERPRINT = "59:a8:7d:83:a3:41:d1:08:0c:57:c3:92:8c:60:b9:db"
-OCI_REGION = "me-riyadh-1"
