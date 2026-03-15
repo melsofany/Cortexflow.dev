@@ -555,9 +555,16 @@ const App: React.FC = () => {
     setInputValue('');
   }, [inputValue, isConnected, autoClassifyType]);
 
+  // ── Stop ────────────────────────────────────────────────────────────────
+  const handleStop = useCallback(() => {
+    socketRef.current?.emit('stopTask');
+    setIsAgentBusy(false);
+    addSystem('تم إيقاف المهمة', 'info');
+  }, [addSystem]);
+
   // ── Socket.io ───────────────────────────────────────────────────────────
   useEffect(() => {
-    const socket = io({ path: '/api/socket' });
+    const socket = io({ path: '/api/socket', transports: ['websocket'] });
     socketRef.current = socket;
 
     socket.on('connect', () => { setIsConnected(true); addSystem('متصل بالخادم بنجاح', 'success'); socket.emit('getStatus'); });
@@ -694,7 +701,7 @@ const App: React.FC = () => {
                 messages={messages} tasks={tasks} isConnected={isConnected}
                 isAgentBusy={isAgentBusy} currentStep={currentStep}
                 inputValue={inputValue} setInputValue={setInputValue}
-                onSubmit={handleSubmit} onResume={handleResume}
+                onSubmit={handleSubmit} onStop={handleStop} onResume={handleResume}
               />
             </div>
             <div className="flex-1 flex flex-col min-h-0">
@@ -713,7 +720,7 @@ const App: React.FC = () => {
                     messages={messages} tasks={tasks} isConnected={isConnected}
                     isAgentBusy={isAgentBusy} currentStep={currentStep}
                     inputValue={inputValue} setInputValue={setInputValue}
-                    onSubmit={handleSubmit} onResume={handleResume}
+                    onSubmit={handleSubmit} onStop={handleStop} onResume={handleResume}
                   />
                 : <BrowserPanel
                     browserImgRef={browserImgRef} browserHasFrame={browserHasFrame}

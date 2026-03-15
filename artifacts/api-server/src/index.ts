@@ -163,6 +163,15 @@ io.on("connection", (socket) => {
     socket.emit("taskResumed", { taskId });
   });
 
+  socket.on("stopTask", () => {
+    taskStore.getAllTasks().forEach(t => {
+      if (t.status === 'running' || t.status === 'pending') {
+        taskStore.updateTask(t.taskId, { status: 'failed', error: 'أُوقفت من قِبل المستخدم' });
+      }
+    });
+    socket.emit("taskFail", { reason: 'stopped_by_user' });
+  });
+
   socket.on("disconnect", () => {
     console.log(`[Socket.io] Client disconnected: ${socket.id}`);
   });
