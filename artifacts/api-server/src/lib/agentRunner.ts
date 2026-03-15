@@ -27,16 +27,24 @@ async function deepseekChat(
 ): Promise<string> {
   if (!DEEPSEEK_KEY) return "";
   try {
+    // إضافة تعليمة عربية إذا لم تكن الرسالة الأولى نظام بالفعل
+    const hasSystem = messages.length > 0 && messages[0].role === "system";
+    const arabicInstruction: ChatMessage = {
+      role: "system",
+      content: "أنت CortexFlow، وكيل ذكاء اصطناعي متقدم. يجب أن يكون تفكيرك وردودك باللغة العربية دائماً.",
+    };
+    const finalMessages = hasSystem ? messages : [arabicInstruction, ...messages];
+
     const res = await axios.post(
       DEEPSEEK_URL,
-      { model: DEEPSEEK_MODEL, messages, max_tokens: maxTokens, temperature },
+      { model: DEEPSEEK_MODEL, messages: finalMessages, max_tokens: maxTokens, temperature },
       { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, "Content-Type": "application/json" }, timeout: 60000 },
     );
     const content: string = res.data?.choices?.[0]?.message?.content || "";
-    if (content) console.log(`[DeepSeek Fallback] استُخدم (${content.length} حرف)`);
+    if (content) console.log(`[DeepSeek] استُخدم (${content.length} حرف)`);
     return content;
   } catch (e: any) {
-    console.log(`[DeepSeek Fallback] فشل: ${e.message}`);
+    console.log(`[DeepSeek] فشل: ${e.message}`);
     return "";
   }
 }
@@ -46,73 +54,77 @@ async function smartChat(
   opts: { temperature?: number; max_tokens?: number; model?: string } = {},
   stepName = "",
 ): Promise<string> {
-  let resp = "";
-  try {
-    resp = await ollamaClient.chat(messages, opts);
-  } catch {
-    resp = "";
-  }
-
-  if (!isWeakResponse(resp)) return resp;
-
+  // DeepSeek API أولاً — إذا كان المفتاح متاحاً
   if (DEEPSEEK_KEY) {
-    const hint = stepName ? `\n[مرحلة: ${stepName}]` : "";
+    const hint = stepName ? `\n[المرحلة الحالية: ${stepName}]` : "";
     const msgs = hint && messages.length
       ? [...messages.slice(0, -1), { ...messages[messages.length - 1], content: messages[messages.length - 1].content + hint }]
       : messages;
-    const dsResp = await deepseekChat(msgs, opts.max_tokens || 800, opts.temperature || 0.35);
-    if (dsResp) return `[🤖 DeepSeek] ${dsResp}`;
+    const dsResp = await deepseekChat(msgs, opts.max_tokens || 1200, opts.temperature || 0.35);
+    if (dsResp && !isWeakResponse(dsResp)) return dsResp;
   }
 
-  return resp || "جاري المعالجة...";
+  // النموذج المحلي كبديل
+  try {
+    const resp = await ollamaClient.chat(messages, opts);
+    if (!isWeakResponse(resp)) return resp;
+    return resp || "جاري المعالجة...";
+  } catch {
+    return "جاري المعالجة...";
+  }
 }
 
 // ── نظام Prompt المتخصص ────────────────────────────────────────────────────
 
-const ACTION_SYSTEM_PROMPT = `You are a browser automation agent. You control a real browser.
-Respond with EXACTLY one line using this format:
-ACTION: <action> | PARAM: <value>
+const ACTION_SYSTEM_PROMPT = `أنت وكيل أتمتة متصفح. تتحكم في متصفح حقيقي. تفكيرك وتخطيطك الداخلي يكون باللغة العربية.
+استجب بسطر واحد فقط بهذا التنسيق الثابت:
+ACTION: <الإجراء> | PARAM: <القيمة>
 
-Available actions:
-  navigate  - go to a URL
-  click     - click element by visible text
-  fill      - fill input: fieldname=value
-  type      - type text into focused element
-  key       - press key: Enter, Tab, Escape, Space
-  scroll    - scroll: up or down
-  wait      - wait a moment
-  done      - task complete (use ONLY when fully done)
+الإجراءات المتاحة:
+  navigate  - الانتقال إلى رابط URL
+  click     - النقر على عنصر بالنص المرئي
+  fill      - ملء حقل إدخال: اسم_الحقل=القيمة
+  type      - كتابة نص في العنصر المحدد
+  key       - ضغط مفتاح: Enter أو Tab أو Escape أو Space
+  scroll    - التمرير: up للأعلى أو down للأسفل
+  wait      - انتظار لحظة
+  done      - المهمة مكتملة (استخدمها فقط عند الانتهاء الكامل)
 
-EXAMPLES:
-User: go to facebook.com
+أمثلة:
+المستخدم: اذهب إلى facebook.com
 ACTION: navigate | PARAM: https://www.facebook.com
 
-User: click the signup button
+المستخدم: انقر على زر التسجيل
 ACTION: click | PARAM: Create new account
 
-RULES:
-- Output ONLY the ACTION line, nothing else
-- Never say you cannot do something
-- Use "done" ONLY after task is fully complete`;
+المستخدم: ابحث عن قهوة
+ACTION: fill | PARAM: q=قهوة
+
+القواعد الصارمة:
+- أخرج سطر ACTION فقط، لا شيء آخر أبداً
+- لا تقل أبداً أنك لا تستطيع التنفيذ
+- استخدم "done" فقط بعد اكتمال المهمة الكاملة بالفعل`;
+
+const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً.`;
 
 const SYSTEM_PROMPTS: Record<string, string> = {
   code: `أنت CortexFlow، وكيل برمجة محترف.
-تكتب كوداً نظيفاً وموثّقاً. تحلّل المتطلبات قبل الكتابة. تقدّم شرحاً موجزاً مع الكود.`,
+تكتب كوداً نظيفاً وموثّقاً. تحلّل المتطلبات قبل الكتابة. تقدّم شرحاً موجزاً مع الكود.${ARABIC_RULE}`,
 
   research: `أنت CortexFlow، وكيل بحث وتحليل متعمق.
-تجمع المعلومات بدقة، تحلّل من زوايا متعددة، وتقدّم ملخصات منظمة وشاملة.`,
+تجمع المعلومات بدقة، تحلّل من زوايا متعددة، وتقدّم ملخصات منظمة وشاملة.${ARABIC_RULE}`,
 
   creative: `أنت CortexFlow، وكيل إبداعي متميز.
-تنتج محتوى أصيلاً وجذاباً بأسلوب احترافي. تتكيّف مع أسلوب المستخدم ومتطلباته.`,
+تنتج محتوى أصيلاً وجذاباً بأسلوب احترافي. تتكيّف مع أسلوب المستخدم ومتطلباته.${ARABIC_RULE}`,
 
   math: `أنت CortexFlow، وكيل رياضيات ومنطق.
-تحلّل المسائل خطوة بخطوة، تتحقق من الحسابات، وتشرح المنطق بوضوح.`,
+تحلّل المسائل خطوة بخطوة، تتحقق من الحسابات، وتشرح المنطق بوضوح.${ARABIC_RULE}`,
 
   reasoning: `أنت CortexFlow، وكيل تفكير استراتيجي.
-تحلّل المواقف من جميع الجوانب، تقيّم الخيارات، وتقدّم توصيات مدعومة بالمنطق.`,
+تحلّل المواقف من جميع الجوانب، تقيّم الخيارات، وتقدّم توصيات مدعومة بالمنطق.${ARABIC_RULE}`,
 
   default: `أنت CortexFlow، وكيل ذكاء اصطناعي احترافي متكامل.
-تنفّذ المهام بكفاءة واحترافية عالية. تردّ بنفس لغة المستخدم.`,
+تنفّذ المهام بكفاءة واحترافية عالية. تردّ دائماً باللغة العربية.${ARABIC_RULE}`,
 };
 
 // ── الوكيل الرئيسي ─────────────────────────────────────────────────────────
@@ -270,9 +282,10 @@ class AgentRunner extends EventEmitter {
       }
     } else {
       if (targetUrl) {
-        this.emitStep(taskId, "ACT", `خطوة 0: navigate → ${targetUrl}`);
+        this.emitStep(taskId, "ACT", `خطوة 0: الانتقال إلى ${targetUrl}`);
         await browserAgent.navigate(targetUrl).catch(() => {});
-        await sleep(1500);
+        await browserAgent.captureNow();
+        await sleep(800);
       }
 
       const history: ChatMessage[] = [{ role: "system", content: ACTION_SYSTEM_PROMPT }];
@@ -284,11 +297,11 @@ class AgentRunner extends EventEmitter {
         const content = await browserAgent.getPageContent();
 
         const pageState = [
-          `Task: ${task.description}`,
-          `Current URL: ${url}`,
-          `Page structure: ${struct.substring(0, 600)}`,
-          `Visible text: ${content.substring(0, 400)}`,
-          `Step ${i}/${MAX_ITERATIONS}: Output ONE action line only.`,
+          `المهمة: ${task.description}`,
+          `الرابط الحالي: ${url}`,
+          `هيكل الصفحة: ${struct.substring(0, 600)}`,
+          `النص المرئي: ${content.substring(0, 400)}`,
+          `الخطوة ${i} من ${MAX_ITERATIONS}: أخرج سطر ACTION واحد فقط.`,
         ].join("\n");
 
         history.push({ role: "user", content: pageState });
@@ -296,7 +309,7 @@ class AgentRunner extends EventEmitter {
         let raw = "";
         for (let retry = 0; retry < MAX_RETRIES; retry++) {
           try {
-            raw = await ollamaClient.chat(history, { temperature: 0.15, max_tokens: 60, model });
+            raw = await smartChat(history, { temperature: 0.15, max_tokens: 80, model }, "ACT");
             break;
           } catch (err: any) {
             if (retry === MAX_RETRIES - 1) {
@@ -338,11 +351,13 @@ class AgentRunner extends EventEmitter {
 
         try {
           await executeAction(action, param);
+          // لقطة فورية بعد كل إجراء للمزامنة مع التفكير
+          await browserAgent.captureNow();
         } catch (err: any) {
           this.emitStep(taskId, "ACT", `تحذير: ${err.message}`);
         }
 
-        await sleep(1000);
+        await sleep(500);
 
         if (i === MAX_ITERATIONS) {
           finalResult = `اكتمل التنفيذ. الموقع الأخير: ${await browserAgent.getCurrentUrl()}`;
@@ -475,6 +490,7 @@ async function executeAction(action: string, param: string): Promise<void> {
   switch (action) {
     case "navigate":
       await browserAgent.navigate(param);
+      await browserAgent.captureNow();
       break;
     case "click":
       await browserAgent.clickByText(param);

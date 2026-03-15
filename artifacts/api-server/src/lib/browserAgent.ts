@@ -47,16 +47,20 @@ class BrowserAgent extends EventEmitter {
     if (this.streamInterval) clearInterval(this.streamInterval);
     this.streamInterval = setInterval(async () => {
       await this.captureAndEmit();
-    }, 500);
+    }, 150);
   }
 
   private async captureAndEmit() {
     if (!this.page || !this.initialized) return;
     try {
-      const screenshot = await this.page.screenshot({ type: "jpeg", quality: 60 });
+      const screenshot = await this.page.screenshot({ type: "jpeg", quality: 70 });
       const base64 = screenshot.toString("base64");
       this.emit("screenshot", { image: base64 });
     } catch { }
+  }
+
+  async captureNow(): Promise<void> {
+    await this.captureAndEmit();
   }
 
   async navigate(url: string): Promise<void> {
@@ -237,7 +241,8 @@ class BrowserAgent extends EventEmitter {
           await this.page.keyboard.up(params.key);
           break;
         case "type":
-          await this.page.keyboard.type(params.text, { delay: 30 });
+        case "type_text":
+          await this.page.keyboard.type(params.text || "", { delay: 30 });
           break;
         case "wheel":
           await this.page.mouse.wheel(params.deltaX || 0, params.deltaY || 0);
