@@ -67,3 +67,7 @@ packages = ["ollama"]
 [userenv]
 
 [userenv.shared]
+OCI_NAMESPACE = "axvloaakqfjp"
+OCI_BUCKET = "cortexflow-models"
+OCI_MYSQL_NAME = "CortexFlow-MySQL"
+OCI_MYSQL_USER = "cortexadmin"
