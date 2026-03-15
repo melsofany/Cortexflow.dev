@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import axios from "axios";
+import { isDeepSeekConfigured } from "../lib/deepseekClassifier.js";
 
 const router: IRouter = Router();
 const AGENT_SERVICE = process.env.AGENT_SERVICE_URL || "http://localhost:8090";
@@ -89,6 +90,17 @@ router.get("/providers/tools", async (_req, res) => {
   } catch {
     res.json({ tools: [] });
   }
+});
+
+router.get("/providers/classifier-status", (_req, res) => {
+  res.json({
+    deepseek: {
+      configured: isDeepSeekConfigured(),
+      model: "deepseek-chat",
+      role: "task classifier",
+      description: "يصنف المهام بدقة عالية في أقل من ثانية ثم يوجه لنموذج Ollama المناسب",
+    },
+  });
 });
 
 export default router;

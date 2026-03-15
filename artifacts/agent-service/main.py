@@ -32,8 +32,11 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-PORT       = int(os.getenv("AGENT_SERVICE_PORT", "8090"))
+OLLAMA_URL      = os.getenv("OLLAMA_URL", "http://localhost:11434")
+PORT            = int(os.getenv("AGENT_SERVICE_PORT", "8090"))
+DEEPSEEK_KEY    = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_URL    = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL  = "deepseek-chat"
 
 app = FastAPI(title="CortexFlow Agent Service — Professional AI System")
 app.add_middleware(
@@ -455,6 +458,95 @@ async def ollama_chat(
             return f"[خطأ في النموذج: {str(e)}]"
 
 
+def _is_weak_response(text: str) -> bool:
+    """هل الرد ضعيف أو فارغ ويحتاج مساعدة DeepSeek؟"""
+    if not text or len(text.strip()) < 20:
+        return True
+    if text.strip().startswith("[خطأ في النموذج"):
+        return True
+    # ردود قصيرة جداً لا تفيد
+    words = text.split()
+    if len(words) < 5:
+        return True
+    return False
+
+
+async def deepseek_chat(
+    messages: list[dict],
+    max_tokens: int = 1000,
+    temperature: float = 0.3,
+) -> str:
+    """استدعاء DeepSeek كمساعد احتياطي"""
+    if not DEEPSEEK_KEY:
+        return ""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                DEEPSEEK_URL,
+                json={
+                    "model": DEEPSEEK_MODEL,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                },
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=60,
+            )
+            result = r.json()
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            print(f"[DeepSeek Fallback] استُخدم بنجاح ({len(content)} حرف)")
+            return content
+    except Exception as e:
+        print(f"[DeepSeek Fallback] فشل: {e}")
+        return ""
+
+
+async def smart_chat(
+    model: str,
+    messages: list[dict],
+    max_tokens: int = 800,
+    temperature: float = 0.3,
+    step_name: str = "",
+) -> tuple[str, str]:
+    """
+    استدعاء ذكي: Ollama أولاً، DeepSeek احتياطاً عند الضعف.
+    يعيد (النص, المصدر) حيث المصدر = 'ollama' أو 'deepseek'
+    """
+    ollama_resp = await ollama_chat(model, messages, max_tokens, temperature)
+
+    if not _is_weak_response(ollama_resp):
+        return ollama_resp, "ollama"
+
+    # الرد ضعيف → نطلب مساعدة DeepSeek
+    if DEEPSEEK_KEY:
+        step_hint = f"\n[ملاحظة: هذا هو دور الوكيل في مرحلة {step_name}]" if step_name else ""
+        ds_messages = messages.copy()
+        if step_hint and ds_messages:
+            ds_messages = ds_messages[:-1] + [
+                {**ds_messages[-1], "content": ds_messages[-1]["content"] + step_hint}
+            ]
+        ds_resp = await deepseek_chat(ds_messages, max_tokens, temperature)
+        if ds_resp:
+            return f"[🤖 DeepSeek] {ds_resp}", "deepseek"
+
+    return ollama_resp or "جاري المعالجة...", "ollama"
+
+
+async def sc(
+    model: str,
+    messages: list[dict],
+    max_tokens: int = 800,
+    temperature: float = 0.3,
+    step_name: str = "",
+) -> str:
+    """غلاف مبسّط لـ smart_chat يُعيد النص فقط (للاستخدام في الوكلاء الداخلية)"""
+    text, _ = await smart_chat(model, messages, max_tokens, temperature, step_name)
+    return text
+
+
 async def ollama_stream(model: str, messages: list[dict], max_tokens: int = 1000):
     """دفق الردود من النموذج"""
     async with httpx.AsyncClient() as c:
@@ -551,9 +643,10 @@ async def ooda_agent(task: str, model: str, category: str, max_iterations: int =
    - ما التحديات المحتملة؟"""
 
     messages.append({"role": "user", "content": observe_prompt})
-    observation = await ollama_chat(model, messages, max_tokens=400)
+    observation, obs_src = await smart_chat(model, messages, max_tokens=400, step_name="OBSERVE")
     messages.append({"role": "assistant", "content": observation})
-    steps.append(f"[OBSERVE] {observation}")
+    src_tag = " [🤖DS]" if obs_src == "deepseek" else ""
+    steps.append(f"[OBSERVE]{src_tag} {observation}")
 
     # ── مرحلة التوجه (Orient) ────────────────────────────────────────────
     orient_prompt = """بناءً على تحليلك، حدد:
@@ -562,9 +655,10 @@ async def ooda_agent(task: str, model: str, category: str, max_iterations: int =
 3. الأدوات المطلوبة إن وجدت"""
 
     messages.append({"role": "user", "content": orient_prompt})
-    orientation = await ollama_chat(model, messages, max_tokens=400)
+    orientation, ori_src = await smart_chat(model, messages, max_tokens=400, step_name="ORIENT")
     messages.append({"role": "assistant", "content": orientation})
-    steps.append(f"[ORIENT] {orientation}")
+    src_tag = " [🤖DS]" if ori_src == "deepseek" else ""
+    steps.append(f"[ORIENT]{src_tag} {orientation}")
 
     # ── مرحلة التنفيذ (Decide + Act) ────────────────────────────────────
     final_result = ""
@@ -586,7 +680,9 @@ RESULT: <النتيجة الكاملة والمفصلة>"""
             act_prompt = "استمر في التنفيذ أو أعطِ النتيجة النهائية باستخدام RESULT:"
 
         messages.append({"role": "user", "content": act_prompt})
-        response = await ollama_chat(model, messages, max_tokens=800, temperature=0.2)
+        response, act_src = await smart_chat(model, messages, max_tokens=800, temperature=0.2, step_name="ACT")
+        if act_src == "deepseek":
+            steps.append(f"[ACT:DS] استُعين بـ DeepSeek لهذه الخطوة")
         messages.append({"role": "assistant", "content": response})
 
         # تحقق من استخدام أداة
@@ -660,10 +756,10 @@ def build_langgraph_agent(model_name: str, category: str):
     """LangGraph pipeline: observe → think → plan → act → verify"""
 
     async def observe_node(state: AgentState) -> dict:
-        r = await ollama_chat(model_name, [
+        r = await sc(model_name, [
             {"role": "system", "content": f"أنت وكيل ذكاء اصطناعي متخصص في مهام {category}. حلّل المهمة بعمق."},
             {"role": "user", "content": f"المهمة: {state['task']}\nما المتطلبات الجوهرية والتحديات المتوقعة؟"},
-        ], max_tokens=350)
+        ], max_tokens=350, step_name="OBSERVE")
         return {"steps": state["steps"] + [f"[OBSERVE] {r}"], "messages": [AIMessage(content=r)]}
 
     async def think_node(state: AgentState) -> dict:
@@ -671,14 +767,14 @@ def build_langgraph_agent(model_name: str, category: str):
         for m in list(state["messages"])[-4:]:
             history.append({"role": "assistant" if isinstance(m, AIMessage) else "user", "content": m.content})
         history.append({"role": "user", "content": "ما أفضل نهج لتنفيذ هذه المهمة بالكامل؟ فكّر بعمق."})
-        r = await ollama_chat(model_name, history, max_tokens=350)
+        r = await sc(model_name, history, max_tokens=350, step_name="THINK")
         return {"steps": state["steps"] + [f"[THINK] {r}"], "messages": [AIMessage(content=r)]}
 
     async def plan_node(state: AgentState) -> dict:
-        r = await ollama_chat(model_name, [
+        r = await sc(model_name, [
             {"role": "system", "content": "أنت مخطط مهام دقيق. ضع خطة واضحة ومتسلسلة."},
             {"role": "user", "content": f"المهمة: {state['task']}\nضع خطة تنفيذ مفصّلة ومرقّمة."},
-        ], max_tokens=300)
+        ], max_tokens=300, step_name="PLAN")
         return {"steps": state["steps"] + [f"[PLAN] {r}"], "messages": [AIMessage(content=r)]}
 
     async def act_node(state: AgentState) -> dict:
@@ -686,10 +782,10 @@ def build_langgraph_agent(model_name: str, category: str):
         if state.get("tool_results"):
             context = f"\n\nنتائج الأدوات:\n" + "\n".join(state["tool_results"][-2:])
         
-        r = await ollama_chat(model_name, [
+        r = await sc(model_name, [
             {"role": "system", "content": f"أنت منفذ مهام محترف متخصص في {category}. قدّم النتيجة الفعلية الكاملة."},
             {"role": "user", "content": f"نفّذ هذه المهمة بالكامل وأعطِ النتيجة الشاملة:\n{state['task']}{context}"},
-        ], max_tokens=800, temperature=0.2)
+        ], max_tokens=800, temperature=0.2, step_name="ACT")
         
         # محاولة تنفيذ أداة إذا طُلبت
         tool_name, tool_result = await parse_and_execute_tool(r)
@@ -705,10 +801,10 @@ def build_langgraph_agent(model_name: str, category: str):
         }
 
     async def verify_node(state: AgentState) -> dict:
-        r = await ollama_chat(model_name, [
+        r = await sc(model_name, [
             {"role": "system", "content": "أنت مراجع جودة دقيق."},
             {"role": "user", "content": f"المهمة: {state['task']}\nالنتيجة:\n{state['result']}\n\nهل اكتملت المهمة بالكامل؟ قيّم وحسّن."},
-        ], max_tokens=300)
+        ], max_tokens=300, step_name="VERIFY")
         complete = any(w in r for w in ["نعم", "اكتمل", "تم", "yes", "complete", "done", "مكتمل"])
         return {
             "steps": state["steps"] + [f"[VERIFY] {r}"],
@@ -770,14 +866,14 @@ async def autogpt_agent(task: str, model: str, category: str, max_iterations: in
     start_time = time.time()
 
     # تحليل وتقسيم الهدف
-    decompose_resp = await ollama_chat(model, [
+    decompose_resp = await sc(model, [
         {"role": "system", "content": f"""أنت AutoGPT، وكيل ذاتي التوجيه متخصص في مهام {category}.
 الأدوات المتاحة:
 {TOOLS_DESCRIPTION}
 
 قسّم الهدف إلى 3-5 مهام صغيرة قابلة للتنفيذ. اكتبها كقائمة مرقمة فقط."""},
         {"role": "user", "content": f"الهدف: {task}\nقسّمه:"},
-    ], max_tokens=300, temperature=0.2)
+    ], max_tokens=300, temperature=0.2, step_name="DECOMPOSE")
 
     subtasks = []
     for line in decompose_resp.strip().split("\n"):

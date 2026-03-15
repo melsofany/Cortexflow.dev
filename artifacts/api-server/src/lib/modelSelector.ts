@@ -1,4 +1,5 @@
 import axios from "axios";
+import { classifyWithDeepSeek } from "./deepseekClassifier.js";
 
 export type TaskCategory =
   | "browser"     // تصفح الويب، نماذج، تسجيل
@@ -216,8 +217,29 @@ export async function selectBestModel(
   description: string,
   taskType?: string,
   availableModels?: string[]
-): Promise<{ model: string; category: TaskCategory; reason: string }> {
-  const category = classifyTask(description, taskType);
+): Promise<{ model: string; category: TaskCategory; reason: string; classifier?: string }> {
+
+  // ── تصنيف المهمة: DeepSeek أولاً، ثم Keywords كبديل ─────────────────────
+  let category: TaskCategory;
+  let classifierSource = "keywords";
+
+  const forcedTypes = ["browser", "system", "research", "ai"];
+  if (taskType && !forcedTypes.includes(taskType)) {
+    category = taskType as TaskCategory;
+    classifierSource = "forced";
+  } else if (taskType === "browser") {
+    category = "browser";
+    classifierSource = "forced";
+  } else {
+    const dsResult = await classifyWithDeepSeek(description);
+    if (dsResult.source === "deepseek" && dsResult.confidence === "high") {
+      category = dsResult.category;
+      classifierSource = "deepseek";
+    } else {
+      category = classifyTask(description, taskType);
+      classifierSource = "keywords";
+    }
+  }
 
   if (!availableModels) {
     try {
@@ -273,10 +295,17 @@ export async function selectBestModel(
     simple:      "مهمة بسيطة — نموذج سريع وكافٍ",
   };
 
+  const classifierLabel = classifierSource === "deepseek"
+    ? "🤖 DeepSeek"
+    : classifierSource === "forced"
+    ? "🎯 مباشر"
+    : "🔑 كلمات مفتاحية";
+
   return {
     model: winner.name,
     category,
-    reason: `${reasonMap[category]} | نقطة: ${scored[0].score.toFixed(2)} | ${modelSelector.getSelfImprovementReport()}`,
+    classifier: classifierSource,
+    reason: `${reasonMap[category]} | تصنيف بـ ${classifierLabel} | نقطة: ${scored[0].score.toFixed(2)} | ${modelSelector.getSelfImprovementReport()}`,
   };
 }
 
