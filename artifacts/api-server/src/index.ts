@@ -2,6 +2,7 @@ import { createServer } from "http";
 import { Server as SocketServer } from "socket.io";
 import app, { ollamaClient, agentRunner } from "./app.js";
 import { taskStore } from "./lib/taskStore.js";
+import { browserAgent } from "./lib/browserAgent.js";
 
 const rawPort = process.env["PORT"];
 
@@ -20,6 +21,7 @@ const httpServer = createServer(app);
 const io = new SocketServer(httpServer, {
   cors: { origin: "*", methods: ["GET", "POST"] },
   path: "/api/socket",
+  maxHttpBufferSize: 5e6,
 });
 
 app.use((req: any, _res: any, next: any) => {
@@ -27,9 +29,18 @@ app.use((req: any, _res: any, next: any) => {
   next();
 });
 
+// ── Browser screenshot streaming ─────────────────────────────────────────────
+browserAgent.on("screenshot", (data: { image: string }) => {
+  if (io.engine.clientsCount > 0) {
+    io.emit("browserStream", data);
+  }
+});
+
+// ── Socket.io connections ────────────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log(`[Socket.io] Client connected: ${socket.id}`);
 
+  // ── Submit + execute task ─────────────────────────────────────────────────
   socket.on("submitTask", async (data) => {
     try {
       const task = taskStore.createTask({
@@ -42,7 +53,6 @@ io.on("connection", (socket) => {
       socket.emit("taskCreated", task);
       io.emit("taskUpdate", task);
 
-      // listen for events from this task BEFORE executing
       const onThinking = (d: any) => {
         if (d.taskId === task.taskId) socket.emit("thinking", d);
       };
@@ -78,7 +88,6 @@ io.on("connection", (socket) => {
       agentRunner.on("taskSuccess", onSuccess);
       agentRunner.on("taskFail", onFail);
 
-      // execute immediately
       agentRunner.executeTask(task).catch((err: any) => {
         socket.emit("error", { message: err.message });
         cleanup();
@@ -88,29 +97,19 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ── Execute existing task ─────────────────────────────────────────────────
   socket.on("executeTask", async (taskId: string) => {
     const task = taskStore.getTask(taskId);
-    if (!task) {
-      socket.emit("error", { message: "Task not found" });
-      return;
-    }
+    if (!task) { socket.emit("error", { message: "Task not found" }); return; }
     if (task.status === "running") return;
 
     const onThinking = (d: any) => { if (d.taskId === taskId) socket.emit("thinking", d); };
     const onStart    = (d: any) => { if (d.taskId === taskId) socket.emit("taskStart", d); };
     const onSuccess  = (d: any) => {
-      if (d.taskId === taskId) {
-        socket.emit("taskSuccess", d);
-        io.emit("taskUpdate", taskStore.getTask(taskId));
-        cleanup();
-      }
+      if (d.taskId === taskId) { socket.emit("taskSuccess", d); io.emit("taskUpdate", taskStore.getTask(taskId)); cleanup(); }
     };
     const onFail = (d: any) => {
-      if (d.taskId === taskId) {
-        socket.emit("taskFail", d);
-        io.emit("taskUpdate", taskStore.getTask(taskId));
-        cleanup();
-      }
+      if (d.taskId === taskId) { socket.emit("taskFail", d); io.emit("taskUpdate", taskStore.getTask(taskId)); cleanup(); }
     };
     const cleanup = () => {
       agentRunner.off("thinking", onThinking);
@@ -127,16 +126,28 @@ io.on("connection", (socket) => {
     agentRunner.executeTask(task).catch(console.error);
   });
 
-  socket.on("resumeTask", async (taskId: string) => {
-    const task = taskStore.getTask(taskId);
-    if (!task) return;
-    socket.emit("taskResumed", { taskId });
+  // ── Browser events from user (click, type, navigate, etc.) ───────────────
+  socket.on("browserEvent", async (data: { type: string; params: any }) => {
+    if (!browserAgent.isReady()) {
+      const ok = await browserAgent.initialize();
+      if (!ok) return;
+    }
+    await browserAgent.handleEvent(data.type, data.params).catch((err: any) => {
+      console.warn("[BrowserEvent] Error:", err.message);
+    });
   });
 
-  socket.on("browserEvent", (_data: any) => {
-    // Browser automation placeholder - requires Playwright setup
+  // ── Navigate URL (sent from address bar) ─────────────────────────────────
+  socket.on("navigateTo", async (url: string) => {
+    if (!browserAgent.isReady()) {
+      await browserAgent.initialize().catch(() => {});
+    }
+    await browserAgent.navigate(url).catch((err: any) => {
+      socket.emit("browserError", { message: err.message });
+    });
   });
 
+  // ── Status ────────────────────────────────────────────────────────────────
   socket.on("getStatus", () => {
     const tasks = taskStore.getAllTasks();
     const logs  = taskStore.getLogs(10);
@@ -145,8 +156,15 @@ io.on("connection", (socket) => {
       logs,
       ollamaAvailable: ollamaClient.isAvailable(),
       activeModel: ollamaClient.getCurrentModel(),
+      browserReady: browserAgent.isReady(),
       timestamp: new Date(),
     });
+  });
+
+  socket.on("resumeTask", async (taskId: string) => {
+    const task = taskStore.getTask(taskId);
+    if (!task) return;
+    socket.emit("taskResumed", { taskId });
   });
 
   socket.on("disconnect", () => {
@@ -160,6 +178,11 @@ async function startServer() {
   } catch {
     console.warn("[Server] Ollama init failed — running without local AI");
   }
+
+  // ── Pre-initialize browser so it's ready before first task ───────────────
+  browserAgent.initialize()
+    .then((ok) => console.log(`[Server] Browser: ${ok ? "✓ Chromium ready" : "✗ not available"}`))
+    .catch(() => console.warn("[Server] Browser init warning"));
 
   httpServer.listen(port, () => {
     console.log(`[Server] CortexFlow running on port ${port}`);
