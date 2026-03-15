@@ -56,6 +56,78 @@ async def pick_best_model(preferred: list[str], available: list[str]) -> str | N
     return available[0] if available else None
 
 
+# ── Smart Model Selection ─────────────────────────────────────────────────────
+
+TASK_KEYWORDS = {
+    "browser":     ["افتح", "تصفح", "انتقل", "موقع", "سجل", "حساب", "facebook", "twitter",
+                    "فيسبوك", "تويتر", "انستجرام", "يوتيوب", "web", "url", "اشتر", "احجز"],
+    "code":        ["اكتب كود", "برمجة", "كود", "script", "python", "javascript", "برنامج",
+                    "function", "api", "class", "اكتب برنامج", "debug", "typescript", "sql"],
+    "research":    ["ابحث", "اشرح", "ما هو", "ما هي", "كيف", "لماذا", "معلومات", "تحليل",
+                    "قارن", "مقارنة", "دراسة", "تقرير", "ملخص", "explain", "research"],
+    "creative":    ["اكتب", "قصة", "مقال", "قصيدة", "محتوى", "نص", "وصف", "إعلان",
+                    "write", "story", "article", "blog", "منشور"],
+    "math":        ["احسب", "حساب", "معادلة", "رياضيات", "calculate", "math", "equation",
+                    "formula", "percentage", "نسبة مئوية"],
+    "translation": ["ترجم", "translation", "translate", "بالعربية", "بالإنجليزية", "اللغة"],
+    "reasoning":   ["فكّر", "استنتج", "هل يمكن", "ما الأفضل", "قيّم", "تقييم", "قرار",
+                    "توصية", "نصيحة", "scenario", "تحليل عميق"],
+    "simple":      [],
+}
+
+# Model capability scores per task type (higher = better)
+MODEL_SCORES: dict[str, dict[str, int]] = {
+    "qwen2:0.5b":               {"browser": 3, "code": 1, "research": 1, "creative": 1, "math": 1, "translation": 3, "reasoning": 1, "simple": 3},
+    "qwen2.5:0.5b":             {"browser": 3, "code": 2, "research": 1, "creative": 1, "math": 1, "translation": 3, "reasoning": 1, "simple": 3},
+    "llama3.2:1b":              {"browser": 2, "code": 3, "research": 3, "creative": 3, "math": 2, "translation": 2, "reasoning": 3, "simple": 2},
+    "llama3.2:3b":              {"browser": 2, "code": 3, "research": 3, "creative": 3, "math": 3, "translation": 2, "reasoning": 3, "simple": 2},
+    "mistral:7b-instruct-q2_K": {"browser": 1, "code": 3, "research": 3, "creative": 3, "math": 3, "translation": 3, "reasoning": 3, "simple": 1},
+    "mistral:latest":           {"browser": 1, "code": 3, "research": 3, "creative": 3, "math": 3, "translation": 3, "reasoning": 3, "simple": 1},
+}
+
+
+def classify_task(description: str, task_type: str = "") -> str:
+    if task_type == "browser":
+        return "browser"
+    text = description.lower()
+    scores = {cat: 0 for cat in TASK_KEYWORDS}
+    for cat, keywords in TASK_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in text:
+                scores[cat] += 1
+    if len(description.split()) <= 5:
+        scores["simple"] += 2
+    best = max(scores.items(), key=lambda x: x[1])
+    return best[0] if best[1] > 0 else "simple"
+
+
+def select_best_model_py(description: str, available: list[str], task_type: str = "") -> tuple[str, str, str]:
+    """Returns (model_name, category, reason)"""
+    category = classify_task(description, task_type)
+    if not available:
+        return ("qwen2:0.5b", category, "لا يوجد نماذج — استخدام الافتراضي")
+
+    best_model = available[0]
+    best_score = -1
+    for m in available:
+        score = MODEL_SCORES.get(m, {}).get(category, 1)
+        if score > best_score:
+            best_score = score
+            best_model = m
+
+    reasons = {
+        "browser":     "مهمة تصفح ويب — نموذج سريع للتنقل",
+        "code":        "مهمة برمجية — نموذج متخصص في الكود",
+        "research":    "مهمة بحثية — نموذج ذو قدرة تحليلية عالية",
+        "creative":    "مهمة إبداعية — نموذج ذو قدرة توليدية",
+        "math":        "مهمة رياضية — نموذج ذو منطق دقيق",
+        "translation": "مهمة ترجمة — نموذج متعدد اللغات",
+        "reasoning":   "مهمة تفكير معقدة — أقوى نموذج متاح",
+        "simple":      "مهمة بسيطة — نموذج سريع وكافٍ",
+    }
+    return (best_model, category, reasons.get(category, ""))
+
+
 async def ollama_chat(model: str, messages: list[dict], max_tokens: int = 500) -> str:
     """Call Ollama chat API."""
     async with httpx.AsyncClient() as client:
@@ -228,9 +300,22 @@ async def execute_task(req: TaskRequest):
     if not available:
         raise HTTPException(503, "No Ollama models available. Make sure Ollama is running.")
 
-    # Pick model
-    preferred = PROVIDER_MODELS.get(req.provider, list(PROVIDER_MODELS.values())[0])
-    model = req.model or await pick_best_model(preferred, available)
+    # Smart model selection: use specified model, or auto-select based on task
+    if req.model and req.model in available:
+        model = req.model
+        category = classify_task(req.task)
+        reason = "نموذج محدد يدوياً"
+    else:
+        model, category, reason = select_best_model_py(req.task, available)
+
+    # If provider specifies preferred models, check if any are installed
+    preferred = PROVIDER_MODELS.get(req.provider, [])
+    if preferred:
+        provider_model = await pick_best_model(preferred, available)
+        if provider_model and req.provider not in ("AutoGPT", "LangGraph"):
+            # For specific providers (not orchestrators), use their model
+            model = provider_model
+
     if not model:
         raise HTTPException(503, f"No model available for provider: {req.provider}")
 

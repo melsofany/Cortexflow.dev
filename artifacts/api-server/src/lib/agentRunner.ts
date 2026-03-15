@@ -2,18 +2,10 @@ import { EventEmitter } from "events";
 import { ollamaClient, ChatMessage } from "./ollamaClient.js";
 import { taskStore, Task } from "./taskStore.js";
 import { browserAgent } from "./browserAgent.js";
+import { selectBestModel, formatModelSelection, TaskCategory } from "./modelSelector.js";
 
 const MAX_ITERATIONS = 20;
 
-const STEP_LABELS: Record<string, string> = {
-  OBSERVE: "مراقبة",
-  THINK:   "تفكير",
-  PLAN:    "تخطيط",
-  ACT:     "تنفيذ",
-  VERIFY:  "تحقق",
-};
-
-// Simplified action prompt optimized for small local models
 const ACTION_SYSTEM_PROMPT = `أنت وكيل متصفح. مهمتك تنفيذ المهام خطوة بخطوة حتى الاكتمال الكامل.
 
 في كل رد، اكتب سطراً واحداً فقط بهذا الشكل:
@@ -41,10 +33,20 @@ class AgentRunner extends EventEmitter {
     this.emit("taskStart", { taskId: task.taskId, description: task.description });
 
     try {
+      // ── Smart Model Selection ─────────────────────────────────────────────
+      const { model, category, reason } = await selectBestModel(
+        task.description,
+        task.type
+      );
+
+      const selectionMsg = formatModelSelection(model, category, reason);
+      this.emitStep(task.taskId, "MODEL", selectionMsg);
+      await sleep(200);
+
       if (task.type === "browser") {
-        await this.executeBrowserTask(task, start);
+        await this.executeBrowserTask(task, start, model);
       } else if (ollamaClient.isAvailable()) {
-        await this.runWithOllama(task, start);
+        await this.runWithOllama(task, start, model);
       } else {
         await this.simulateWithSteps(task, start);
       }
@@ -71,7 +73,7 @@ class AgentRunner extends EventEmitter {
     });
   }
 
-  private async executeBrowserTask(task: Task, start: number): Promise<void> {
+  private async executeBrowserTask(task: Task, start: number, model: string): Promise<void> {
     const taskId = task.taskId;
 
     // ── OBSERVE ────────────────────────────────────────────────────────────
@@ -85,12 +87,15 @@ class AgentRunner extends EventEmitter {
       return;
     }
 
+    const chat = (msgs: ChatMessage[], maxTok = 300) =>
+      ollamaClient.chat(msgs, { temperature: 0.3, max_tokens: maxTok, model });
+
     // ── THINK ──────────────────────────────────────────────────────────────
     if (ollamaClient.isAvailable()) {
-      const thinkContent = await ollamaClient.chat([
+      const thinkContent = await chat([
         { role: "system", content: this.systemPrompt },
         { role: "user", content: `المهمة: "${task.description}"\nما الموقع المستهدف وما الخطوات الكاملة اللازمة؟` },
-      ], { max_tokens: 300 }).catch(() => "سأنفذ المهمة خطوة بخطوة");
+      ]).catch(() => "سأنفذ المهمة خطوة بخطوة");
       this.emitStep(taskId, "THINK", thinkContent);
     } else {
       this.emitStep(taskId, "THINK", `التفكير في تنفيذ: "${task.description}"`);
@@ -100,10 +105,10 @@ class AgentRunner extends EventEmitter {
     // ── PLAN ───────────────────────────────────────────────────────────────
     const targetUrl = extractUrl(task.description) || task.url;
     if (ollamaClient.isAvailable()) {
-      const planContent = await ollamaClient.chat([
+      const planContent = await chat([
         { role: "system", content: this.systemPrompt },
         { role: "user", content: `المهمة: "${task.description}". اذكر الخطوات المتسلسلة الكاملة بإيجاز.` },
-      ], { max_tokens: 250 }).catch(() => `الانتقال إلى ${targetUrl || "الموقع"} وتنفيذ جميع الإجراءات`);
+      ], 250).catch(() => `الانتقال إلى ${targetUrl || "الموقع"} وتنفيذ جميع الإجراءات`);
       this.emitStep(taskId, "PLAN", planContent);
     } else {
       this.emitStep(taskId, "PLAN", targetUrl
@@ -113,22 +118,19 @@ class AgentRunner extends EventEmitter {
     await sleep(200);
 
     // ── ACT: Agentic Loop ──────────────────────────────────────────────────
-    this.emitStep(taskId, "ACT", "بدء التنفيذ التفاعلي...");
-
+    this.emitStep(taskId, "ACT", `بدء التنفيذ التفاعلي بنموذج ${model}...`);
     let finalResult = "";
 
     if (!ollamaClient.isAvailable()) {
-      // No LLM — basic navigation only
       if (targetUrl) {
         this.emitStep(taskId, "ACT", `الانتقال إلى: ${targetUrl}`);
         await browserAgent.navigate(targetUrl).catch((err: any) =>
           this.emitStep(taskId, "ACT", `تحذير: ${err.message}`)
         );
-        finalResult = `تم الانتقال إلى: ${await browserAgent.getCurrentUrl()}.\n(لتنفيذ المهمة كاملاً، يحتاج الوكيل لنموذج Ollama)`;
+        finalResult = `تم الانتقال إلى: ${await browserAgent.getCurrentUrl()}.`;
         this.emitStep(taskId, "ACT", finalResult);
       }
     } else {
-      // LLM-driven agentic loop
       const history: ChatMessage[] = [
         { role: "system", content: ACTION_SYSTEM_PROMPT },
       ];
@@ -137,31 +139,28 @@ class AgentRunner extends EventEmitter {
       while (iteration < MAX_ITERATIONS) {
         iteration++;
 
-        // Get current page state
         const structure = await browserAgent.getPageStructure();
         const content = await browserAgent.getPageContent();
         const url = await browserAgent.getCurrentUrl();
-
-        const pageState = `URL الحالي: ${url}\n${structure}\nمحتوى: ${content.substring(0, 500)}`;
+        const pageState = `URL: ${url}\n${structure}\nمحتوى: ${content.substring(0, 500)}`;
 
         history.push({
           role: "user",
-          content: `المهمة: "${task.description}"\n${pageState}\n\nما الخطوة ${iteration}؟ اكتب سطراً واحداً فقط.`,
+          content: `المهمة: "${task.description}"\n${pageState}\n\nما الخطوة ${iteration}؟ سطر واحد فقط.`,
         });
 
         let rawResponse = "";
         try {
-          rawResponse = await ollamaClient.chat(history, { temperature: 0.2, max_tokens: 100 });
+          rawResponse = await ollamaClient.chat(history, { temperature: 0.2, max_tokens: 100, model });
           history.push({ role: "assistant", content: rawResponse });
         } catch (err: any) {
           this.emitStep(taskId, "ACT", `خطأ: ${err.message}`);
           break;
         }
 
-        // Parse: ACTION: xxx | PARAM: yyy
         const parsed = parseAction(rawResponse);
         if (!parsed) {
-          this.emitStep(taskId, "ACT", `لم أفهم الاستجابة: ${rawResponse.substring(0, 80)}`);
+          this.emitStep(taskId, "ACT", `لم أفهم: ${rawResponse.substring(0, 80)}`);
           continue;
         }
 
@@ -196,22 +195,16 @@ class AgentRunner extends EventEmitter {
       verifyResult = await ollamaClient.chat([
         { role: "system", content: "لخّص نتيجة المهمة بجملة أو جملتين." },
         { role: "user", content: `المهمة: "${task.description}"\nالنتيجة: ${finalResult}\nURL: ${url}\nهل اكتملت؟ لخّص.` },
-      ], { max_tokens: 150 }).catch(() => finalResult);
+      ], { max_tokens: 150, model }).catch(() => finalResult);
     }
 
     this.emitStep(taskId, "VERIFY", verifyResult);
     taskStore.updateTask(taskId, { status: "completed", result: verifyResult });
-    taskStore.addLog({
-      taskId,
-      agentType: "AgentRunner",
-      action: "task_complete",
-      output: verifyResult.substring(0, 300),
-      durationMs: Date.now() - start,
-    });
+    taskStore.addLog({ taskId, agentType: "AgentRunner", action: "task_complete", output: verifyResult.substring(0, 300), durationMs: Date.now() - start });
     this.emit("taskSuccess", { taskId, result: verifyResult });
   }
 
-  private async runWithOllama(task: Task, start: number): Promise<void> {
+  private async runWithOllama(task: Task, start: number, model: string): Promise<void> {
     const steps = ["OBSERVE", "THINK", "PLAN", "ACT", "VERIFY"];
     const prompts: Record<string, string> = {
       OBSERVE: `المهمة: "${task.description}"\nحلّل المتطلبات.`,
@@ -227,7 +220,7 @@ class AgentRunner extends EventEmitter {
       messages.push({ role: "user", content: prompts[step] });
       this.emitStep(task.taskId, step, `...`);
       try {
-        const resp = await ollamaClient.chat(messages, { temperature: 0.4, max_tokens: 400 });
+        const resp = await ollamaClient.chat(messages, { temperature: 0.4, max_tokens: 400, model });
         messages.push({ role: "assistant", content: resp });
         this.emitStep(task.taskId, step, resp);
         if (step === "ACT" || step === "VERIFY") finalResult = resp;
@@ -246,9 +239,9 @@ class AgentRunner extends EventEmitter {
     const content: Record<string, string> = {
       OBSERVE: `تحليل المهمة: "${task.description}".`,
       THINK:   `التفكير في طريقة التنفيذ.`,
-      PLAN:    `الخطة:\n1. تهيئة الأدوات\n2. تنفيذ الإجراءات\n3. التحقق من الاكتمال`,
-      ACT:     `وضع المحاكاة: لتفعيل التنفيذ الحقيقي، شغّل Ollama مع نموذج qwen2:0.5b`,
-      VERIFY:  `اكتملت المحاكاة. الوكيل جاهز لمهام جديدة.`,
+      PLAN:    `الخطة:\n1. تهيئة الأدوات\n2. تنفيذ الإجراءات\n3. التحقق`,
+      ACT:     `وضع المحاكاة. لتفعيل التنفيذ الحقيقي، تأكد من تشغيل Ollama.`,
+      VERIFY:  `اكتملت المحاكاة. الوكيل جاهز.`,
     };
     for (const step of ["OBSERVE", "THINK", "PLAN", "ACT", "VERIFY"]) {
       await sleep(500);
@@ -261,34 +254,27 @@ class AgentRunner extends EventEmitter {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 function parseAction(text: string): { action: string; param: string } | null {
-  // Match: ACTION: xxx | PARAM: yyy
   const m = text.match(/ACTION:\s*(\w+)\s*\|\s*PARAM:\s*(.+)/i);
   if (m) {
     const action = m[1].toLowerCase().trim();
     let param = m[2].trim();
-    // Strip any accidental "URL:" prefix the model might add
     if (action === "navigate") {
       param = param.replace(/^url:\s*/i, "").trim();
-      // Ensure valid URL
       if (!param.startsWith("http") && !param.startsWith("about:")) {
         param = "https://" + param;
       }
-      // Skip blank/invalid navigate
       if (param === "about:blank" || param === "https://about:blank") return null;
     }
     return { action, param };
   }
-
-  // Fallback: detect "done" keyword
   if (/\bdone\b/i.test(text)) {
     return { action: "done", param: text.replace(/\bdone\b/i, "").trim() || "اكتملت المهمة" };
   }
-
   return null;
 }
 
@@ -297,40 +283,31 @@ async function executeAction(action: string, param: string): Promise<void> {
     case "navigate":
       await browserAgent.navigate(param);
       break;
-
     case "click":
       await browserAgent.clickByText(param);
       break;
-
     case "fill": {
-      // format: fieldName=value or fieldId=value
       const eqIdx = param.indexOf("=");
       if (eqIdx === -1) break;
       const selector = param.substring(0, eqIdx).trim();
       const value = param.substring(eqIdx + 1).trim();
-      // Try as id, name, placeholder, or label
-      const tried = await browserAgent.fillField(`#${selector}`, value)
+      await browserAgent.fillField(`#${selector}`, value)
         || await browserAgent.fillField(`[name="${selector}"]`, value)
         || await browserAgent.fillField(`[placeholder*="${selector}"]`, value);
       break;
     }
-
     case "type":
       await browserAgent.type(param);
       break;
-
     case "key":
       await browserAgent.pressKey(param);
       break;
-
     case "scroll":
       await browserAgent.scroll(0, param === "up" ? -400 : 400);
       break;
-
     case "wait":
       await sleep(2000);
       break;
-
     default:
       break;
   }
@@ -353,17 +330,13 @@ function extractUrl(text: string): string | null {
     "لينكدإن": "https://www.linkedin.com",
     "linkedin": "https://www.linkedin.com",
   };
-
   for (const [key, url] of Object.entries(siteMap)) {
     if (text.toLowerCase().includes(key.toLowerCase())) return url;
   }
-
   const urlMatch = text.match(/https?:\/\/[^\s]+/i);
   if (urlMatch) return urlMatch[0];
-
   const domainMatch = text.match(/(?:افتح|اذهب إلى|تصفح|موقع)\s+([a-z0-9.-]+\.[a-z]{2,})/i);
   if (domainMatch) return `https://${domainMatch[1]}`;
-
   return null;
 }
 
