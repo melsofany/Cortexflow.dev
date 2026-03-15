@@ -721,10 +721,12 @@ RESULT: <النتيجة الكاملة والمفصلة>"""
     steps.append(f"[VERIFY] {verification}")
 
     duration = time.time() - start_time
-    success = len(final_result) > 20
+    # نجاح حقيقي: أي نتيجة غير فارغة (حتى الأرقام القصيرة صحيحة)
+    success = bool(final_result) and len(final_result.strip()) > 0
 
-    # تحديث الذاكرة والتحسين الذاتي
-    quality = min(1.0, len(final_result) / 200)
+    # تقييم الجودة: نسبة بناءً على الطول مع حد أدنى لضمان التقييم العادل
+    raw_quality = len(final_result) / 200
+    quality = max(0.3, min(1.0, raw_quality)) if success else 0.1
     memory.record_result(model, category, success, duration, quality)
 
     return {
