@@ -9,6 +9,64 @@ const MAX_ITERATIONS = 20;
 const MAX_RETRIES    = 2;
 const AGENT_SERVICE  = process.env.AGENT_SERVICE_URL || "http://localhost:8090";
 
+const DEEPSEEK_KEY   = process.env.DEEPSEEK_API_KEY || "";
+const DEEPSEEK_URL   = "https://api.deepseek.com/v1/chat/completions";
+const DEEPSEEK_MODEL = "deepseek-chat";
+
+function isWeakResponse(text: string): boolean {
+  if (!text || text.trim().length < 20) return true;
+  if (text.trim().startsWith("[خطأ") || text.trim().startsWith("[Error")) return true;
+  if (text.trim().split(/\s+/).length < 5) return true;
+  return false;
+}
+
+async function deepseekChat(
+  messages: ChatMessage[],
+  maxTokens = 800,
+  temperature = 0.35,
+): Promise<string> {
+  if (!DEEPSEEK_KEY) return "";
+  try {
+    const res = await axios.post(
+      DEEPSEEK_URL,
+      { model: DEEPSEEK_MODEL, messages, max_tokens: maxTokens, temperature },
+      { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, "Content-Type": "application/json" }, timeout: 60000 },
+    );
+    const content: string = res.data?.choices?.[0]?.message?.content || "";
+    if (content) console.log(`[DeepSeek Fallback] استُخدم (${content.length} حرف)`);
+    return content;
+  } catch (e: any) {
+    console.log(`[DeepSeek Fallback] فشل: ${e.message}`);
+    return "";
+  }
+}
+
+async function smartChat(
+  messages: ChatMessage[],
+  opts: { temperature?: number; max_tokens?: number; model?: string } = {},
+  stepName = "",
+): Promise<string> {
+  let resp = "";
+  try {
+    resp = await ollamaClient.chat(messages, opts);
+  } catch {
+    resp = "";
+  }
+
+  if (!isWeakResponse(resp)) return resp;
+
+  if (DEEPSEEK_KEY) {
+    const hint = stepName ? `\n[مرحلة: ${stepName}]` : "";
+    const msgs = hint && messages.length
+      ? [...messages.slice(0, -1), { ...messages[messages.length - 1], content: messages[messages.length - 1].content + hint }]
+      : messages;
+    const dsResp = await deepseekChat(msgs, opts.max_tokens || 800, opts.temperature || 0.35);
+    if (dsResp) return `[🤖 DeepSeek] ${dsResp}`;
+  }
+
+  return resp || "جاري المعالجة...";
+}
+
 // ── نظام Prompt المتخصص ────────────────────────────────────────────────────
 
 const ACTION_SYSTEM_PROMPT = `You are a browser automation agent. You control a real browser.
@@ -176,11 +234,11 @@ class AgentRunner extends EventEmitter {
     const useOllama = ollamaClient.isAvailable();
 
     if (useOllama) {
-      const thought = await ollamaClient.chat([
+      const thought = await smartChat([
         { role: "system", content: SYSTEM_PROMPTS.default },
         { role: "user", content: `المهمة: "${task.description}"\nما الموقع المستهدف وما الخطوات الكاملة؟` },
-      ], { temperature: 0.4, max_tokens: 250, model }).catch(() => "سأنفذ المهمة خطوة بخطوة");
-      this.emitStep(taskId, "THINK", thought);
+      ], { temperature: 0.4, max_tokens: 250, model }, "THINK");
+      this.emitStep(taskId, "THINK", thought || "سأنفذ المهمة خطوة بخطوة");
     } else {
       this.emitStep(taskId, "THINK", `خطة تنفيذ: "${task.description}"`);
     }
@@ -188,10 +246,10 @@ class AgentRunner extends EventEmitter {
 
     const targetUrl = extractUrl(task.description) || task.url;
     if (useOllama) {
-      const plan = await ollamaClient.chat([
+      const plan = await smartChat([
         { role: "system", content: SYSTEM_PROMPTS.default },
         { role: "user", content: `المهمة: "${task.description}". اذكر خطوات التنفيذ بإيجاز.` },
-      ], { temperature: 0.3, max_tokens: 200, model }).catch(() => "");
+      ], { temperature: 0.3, max_tokens: 200, model }, "PLAN");
       this.emitStep(taskId, "PLAN", plan || `الانتقال إلى الموقع وتنفيذ الإجراءات`);
     } else {
       this.emitStep(taskId, "PLAN", targetUrl
@@ -299,10 +357,10 @@ class AgentRunner extends EventEmitter {
     let verifyResult = finalResult;
     if (useOllama) {
       const url = await browserAgent.getCurrentUrl();
-      verifyResult = await ollamaClient.chat([
+      verifyResult = await smartChat([
         { role: "system", content: "لخّص نتيجة المهمة بجملة أو جملتين." },
         { role: "user", content: `المهمة: "${task.description}"\nالنتيجة: ${finalResult}\nURL الحالي: ${url}\nلخّص ما تم.` },
-      ], { max_tokens: 150, model }).catch(() => finalResult);
+      ], { max_tokens: 150, model }, "VERIFY") || finalResult;
     }
 
     this.emitStep(taskId, "VERIFY", verifyResult);
@@ -334,15 +392,11 @@ class AgentRunner extends EventEmitter {
 
     for (const step of steps) {
       messages.push({ role: "user", content: prompts[step] });
-      try {
-        const maxTokens = step === "ACT" ? 800 : step === "VERIFY" ? 300 : 400;
-        const resp = await ollamaClient.chat(messages, { temperature: 0.35, max_tokens: maxTokens, model });
-        messages.push({ role: "assistant", content: resp });
-        this.emitStep(task.taskId, step, resp);
-        if (step === "ACT" || step === "VERIFY") finalResult = resp;
-      } catch {
-        this.emitStep(task.taskId, step, "جاري المعالجة...");
-      }
+      const maxTokens = step === "ACT" ? 800 : step === "VERIFY" ? 300 : 400;
+      const resp = await smartChat(messages, { temperature: 0.35, max_tokens: maxTokens, model }, step);
+      messages.push({ role: "assistant", content: resp });
+      this.emitStep(task.taskId, step, resp);
+      if (step === "ACT" || step === "VERIFY") finalResult = resp;
       await sleep(200);
     }
 

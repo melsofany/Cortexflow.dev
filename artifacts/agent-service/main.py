@@ -717,7 +717,7 @@ RESULT: <النتيجة الكاملة والمفصلة>"""
         {"role": "system", "content": "أنت مراجع جودة. قيّم النتيجة باختصار."},
         {"role": "user", "content": f"المهمة: {task}\nالنتيجة: {final_result[:500]}\nهل اكتملت المهمة؟ قيّم وحسّن إن لزم."}
     ]
-    verification = await ollama_chat(model, verify_msgs, max_tokens=300)
+    verification = await sc(model, verify_msgs, max_tokens=300, step_name="VERIFY")
     steps.append(f"[VERIFY] {verification}")
 
     duration = time.time() - start_time
@@ -896,7 +896,7 @@ async def autogpt_agent(task: str, model: str, category: str, max_iterations: in
         current_task = memory_obj.pending_tasks.pop(0)
         context = memory_obj.summary()
 
-        exec_resp = await ollama_chat(model, [
+        exec_resp = await sc(model, [
             {"role": "system", "content": f"""أنت AutoGPT تنفّذ مهمة ضمن هدف أكبر.
 الهدف الرئيسي: {task}
 ذاكرتك:
@@ -906,7 +906,7 @@ async def autogpt_agent(task: str, model: str, category: str, max_iterations: in
 TOOL: <اسم>
 PARAMS: {{"مفتاح": "قيمة"}}"""},
             {"role": "user", "content": f"نفّذ: {current_task}"},
-        ], max_tokens=500, temperature=0.3)
+        ], max_tokens=500, temperature=0.3, step_name=f"STEP-{iteration+1}")
 
         tool_name, tool_result = await parse_and_execute_tool(exec_resp)
         if tool_result:
@@ -916,17 +916,17 @@ PARAMS: {{"مفتاح": "قيمة"}}"""},
         memory_obj.observations.append(f"'{current_task}': {exec_resp[:150]}...")
         memory_obj.completed_tasks.append(current_task)
 
-        critique = await ollama_chat(model, [
+        critique = await sc(model, [
             {"role": "system", "content": "قيّم النتيجة: هل تكفي؟ نعم/لا + ملاحظة موجزة."},
             {"role": "user", "content": f"المهمة: {current_task}\nالنتيجة: {exec_resp[:300]}\nالتقييم:"},
-        ], max_tokens=80, temperature=0.1)
+        ], max_tokens=80, temperature=0.1, step_name="CRITIQUE")
 
         steps.append(f"[STEP-{iteration+1}] {current_task}\n→ {exec_resp[:300]}\n⚡ {critique}")
 
-    synthesis = await ollama_chat(model, [
+    synthesis = await sc(model, [
         {"role": "system", "content": "لخّص إنجازات الوكيل في إجابة شاملة ومنظمة نهائية."},
         {"role": "user", "content": f"الهدف: {task}\nما تم إنجازه:\n{memory_obj.summary()}\nالملخص النهائي:"},
-    ], max_tokens=600, temperature=0.2)
+    ], max_tokens=600, temperature=0.2, step_name="SYNTHESIS")
 
     steps.append(f"[SYNTHESIS] {synthesis}")
     duration = time.time() - start_time
@@ -947,13 +947,13 @@ async def code_interpreter_agent(task: str, model: str) -> dict:
     steps.append(f"[CODE-INTERPRETER] نموذج: {model}")
 
     # توليد الكود
-    code_resp = await ollama_chat(model, [
+    code_resp = await sc(model, [
         {"role": "system", "content": """أنت مبرمج Python خبير.
 اكتب كوداً قابلاً للتشغيل مباشرةً لتنفيذ المهمة.
 أحط الكود بـ ```python و```.
 لا تضف شرحاً قبل الكود."""},
         {"role": "user", "content": f"المهمة: {task}\nالكود:"},
-    ], max_tokens=800, temperature=0.1)
+    ], max_tokens=800, temperature=0.1, step_name="GENERATE")
 
     steps.append(f"[GENERATE] {code_resp}")
 
@@ -969,10 +969,10 @@ async def code_interpreter_agent(task: str, model: str) -> dict:
         steps.append(f"[EXECUTE]\nالكود:\n{code}\n\nالمخرجات:\n{result}")
 
         # تحليل النتيجة
-        analysis = await ollama_chat(model, [
+        analysis = await sc(model, [
             {"role": "system", "content": "حلّل مخرجات الكود وفسّرها."},
             {"role": "user", "content": f"المهمة: {task}\nالكود:\n{code}\nالمخرجات:\n{result}\nالتفسير:"},
-        ], max_tokens=300)
+        ], max_tokens=300, step_name="ANALYZE")
         steps.append(f"[ANALYZE] {analysis}")
 
         return {"steps": steps, "result": f"الكود:\n```python\n{code}\n```\n\nالمخرجات:\n{result}\n\nالتحليل:\n{analysis}"}
@@ -990,19 +990,19 @@ async def mistral_agent(task: str, model: str, category: str) -> dict:
     analyze_msgs = [
         {"role": "user", "content": f"[INST] أنت Mistral AI، خبير في مهام {category}. حلّل هذه المهمة وضع خطة:\n{task} [/INST]"}
     ]
-    analysis = await ollama_chat(model, analyze_msgs, max_tokens=400, temperature=0.3)
+    analysis = await sc(model, analyze_msgs, max_tokens=400, temperature=0.3, step_name="MISTRAL:ANALYZE")
     steps.append(f"[MISTRAL:ANALYZE] {analysis}")
 
     execute_msgs = [
         {"role": "user", "content": f"[INST] المهمة: {task}\nالتحليل: {analysis}\nنفّذ الآن وأعطِ النتيجة الكاملة والدقيقة. [/INST]"}
     ]
-    result = await ollama_chat(model, execute_msgs, max_tokens=800, temperature=0.15)
+    result = await sc(model, execute_msgs, max_tokens=800, temperature=0.15, step_name="MISTRAL:EXECUTE")
     steps.append(f"[MISTRAL:EXECUTE] {result}")
 
     verify_msgs = [
         {"role": "user", "content": f"[INST] راجع النتيجة وتحقق من اكتمالها:\n{result[:400]}\n\nهل هي كاملة ودقيقة؟ حسّن إن لزم. [/INST]"}
     ]
-    final = await ollama_chat(model, verify_msgs, max_tokens=300, temperature=0.1)
+    final = await sc(model, verify_msgs, max_tokens=300, temperature=0.1, step_name="MISTRAL:VERIFY")
     steps.append(f"[MISTRAL:VERIFY] {final}")
 
     return {"steps": steps, "result": final}
