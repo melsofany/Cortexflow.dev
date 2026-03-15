@@ -1,0 +1,89 @@
+services:
+  - type: web
+    name: cortexflow-api
+    runtime: node
+    repo: https://github.com/melsofany/Cortexflow.dev
+    branch: master
+    buildCommand: "npm install -g pnpm@10 && pnpm install && pnpm --filter @workspace/api-zod build || true && pnpm --filter @workspace/api-server build"
+    startCommand: "node artifacts/api-server/dist/index.cjs"
+    healthCheckPath: /api/healthz
+    plan: starter
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: AGENT_SERVICE_URL
+        value: https://cortexflow-agent.onrender.com
+      - key: OLLAMA_URL
+        value: http://localhost:11434
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cortexflow-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: cortexflow-redis
+          type: redis
+          property: connectionString
+      - key: DEEPSEEK_API_KEY
+        sync: false
+
+  - type: web
+    name: cortexflow-agent
+    runtime: python
+    repo: https://github.com/melsofany/Cortexflow.dev
+    branch: master
+    buildCommand: "pip install fastapi==0.115.0 uvicorn==0.30.6 httpx==0.27.2 pydantic==2.9.2 langchain-core==0.3.10 langgraph==0.2.28 duckduckgo-search==6.3.5 redis==5.1.1"
+    startCommand: "python artifacts/agent-service/main.py"
+    healthCheckPath: /health
+    plan: starter
+    region: oregon
+    envVars:
+      - key: AGENT_SERVICE_PORT
+        value: "10000"
+      - key: OLLAMA_URL
+        value: http://localhost:11434
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: REDIS_URL
+        fromService:
+          name: cortexflow-redis
+          type: redis
+          property: connectionString
+      - key: DEEPSEEK_API_KEY
+        sync: false
+
+  - type: static
+    name: cortexflow-web
+    repo: https://github.com/melsofany/Cortexflow.dev
+    branch: master
+    buildCommand: "npm install -g pnpm@10 && pnpm install && pnpm --filter @workspace/api-zod build || true && BASE_PATH=/ PORT=3000 NODE_ENV=production pnpm --filter @workspace/cortexflow build"
+    staticPublishPath: artifacts/cortexflow/dist/public
+    envVars:
+      - key: BASE_PATH
+        value: /
+      - key: PORT
+        value: "3000"
+      - key: NODE_ENV
+        value: production
+      - key: VITE_API_URL
+        value: https://cortexflow-api.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+databases:
+  - name: cortexflow-db
+    databaseName: cortexflow
+    user: cortexflow_user
+    plan: free
+    region: oregon
+
+  - name: cortexflow-redis
+    type: redis
+    plan: free
+    region: oregon
+    ipAllowList: []
