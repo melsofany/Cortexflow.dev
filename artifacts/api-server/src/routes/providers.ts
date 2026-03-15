@@ -4,27 +4,38 @@ import axios from "axios";
 const router: IRouter = Router();
 const AGENT_SERVICE = "http://localhost:8090";
 
-// List all providers and their installed models
+// List all providers with descriptions (LangGraph, AutoGPT, OpenInterpreter, Mistral, ...)
 router.get("/providers", async (_req, res) => {
   try {
-    const resp = await axios.get(`${AGENT_SERVICE}/models`, { timeout: 5000 });
-    res.json(resp.data);
+    const [modelsResp, providersResp] = await Promise.all([
+      axios.get(`${AGENT_SERVICE}/models`,    { timeout: 5000 }),
+      axios.get(`${AGENT_SERVICE}/providers`, { timeout: 5000 }),
+    ]);
+    res.json({
+      models:    modelsResp.data,
+      providers: providersResp.data,
+    });
   } catch {
     res.status(503).json({ error: "Agent service unavailable" });
   }
 });
 
-// List installed Ollama models
+// List installed Ollama models + available providers
 router.get("/providers/models", async (_req, res) => {
   try {
     const resp = await axios.get(`${AGENT_SERVICE}/health`, { timeout: 5000 });
-    res.json({ models: resp.data.available_models, providers: resp.data.providers });
+    res.json({
+      models:       resp.data.available_models,
+      providers:    resp.data.providers,
+      integrations: resp.data.integrations,
+    });
   } catch {
     res.status(503).json({ error: "Agent service unavailable" });
   }
 });
 
-// Execute a task via a specific provider (LangGraph, AutoGPT, meta-llama, etc.)
+// Execute task via a specific provider
+// Providers: LangGraph | AutoGPT | OpenInterpreter | mistralai | QwenLM | meta-llama
 router.post("/providers/execute", async (req, res) => {
   const { task, provider, model } = req.body;
   if (!task) {
@@ -34,8 +45,8 @@ router.post("/providers/execute", async (req, res) => {
   try {
     const resp = await axios.post(
       `${AGENT_SERVICE}/execute`,
-      { task, provider: provider || "QwenLM", model },
-      { timeout: 180000 }
+      { task, provider: provider || "LangGraph", model },
+      { timeout: 300000 }
     );
     res.json(resp.data);
   } catch (err: any) {
@@ -44,7 +55,7 @@ router.post("/providers/execute", async (req, res) => {
   }
 });
 
-// Pull a new model from Ollama registry
+// Pull a new Ollama model (streaming)
 router.post("/providers/pull-model", async (req, res) => {
   const { model } = req.body;
   if (!model) {
