@@ -281,294 +281,209 @@ class BrowserAgent extends EventEmitter {
     return false;
   }
 
-  // اختيار قيمة من قائمة <select> بطريقة ذكية (بالنص أو القيمة أو الرقم)
+  // اختيار قيمة من قائمة <select> بطريقة ذكية — مع دعم iframes
   async smartSelect(hint: string, value: string): Promise<boolean> {
     if (!this.page) return false;
 
-    // دالة React-safe متقدمة: تضبط القيمة عبر React Fiber مباشرةً
-    const reactSet = async (sel: string, optValue: string): Promise<void> => {
-      await this.page!.evaluate(({ selector, val }) => {
-        const el = document.querySelector<HTMLSelectElement>(selector);
-        if (!el) return;
+    const h = hint.toLowerCase();
+    const v = value.toLowerCase();
 
-        // الخطوة 1: ضبط القيمة باستخدام native setter
-        const nativeSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLSelectElement.prototype, "value"
-        )?.set;
-        if (nativeSetter) nativeSetter.call(el, val);
-        else el.value = val;
-
-        // الخطوة 2: إطلاق أحداث DOM الأصيلة
-        el.dispatchEvent(new Event("input",  { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
-
-        // الخطوة 3: React Fiber — استدعاء onChange مباشرةً
-        try {
-          const fiberKey = Object.keys(el).find(k =>
-            k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance")
-          );
-          if (fiberKey) {
-            let fiber = (el as any)[fiberKey];
-            while (fiber) {
-              const props = fiber.memoizedProps || fiber.pendingProps;
-              if (props?.onChange && typeof props.onChange === "function") {
-                // بناء حدث اصطناعي يحاكي React SyntheticEvent
-                const fakeEvent = {
-                  target: el,
-                  currentTarget: el,
-                  nativeEvent: new Event("change", { bubbles: true }),
-                  bubbles: true,
-                  preventDefault: () => {},
-                  stopPropagation: () => {},
-                  isPersistent: () => true,
-                  persist: () => {},
-                };
-                props.onChange(fakeEvent);
-                break;
-              }
-              fiber = fiber.return;
-            }
-          }
-        } catch (_) { /* React Fiber غير متاح */ }
-
-        // الخطوة 4: InputEvent بدلاً من Event (لـ React 18+)
-        try {
-          el.dispatchEvent(new InputEvent("input",  { bubbles: true, data: val }));
-          el.dispatchEvent(new InputEvent("change", { bubbles: true }));
-        } catch (_) {}
-      }, { selector: sel, val: optValue });
-    };
-
-    // التحقق من أن قيمة select تغيّرت فعلاً بعد الاختيار (مع انتظار render React)
-    const verifySelected = async (selector: string, expectedValue: string): Promise<boolean> => {
+    // دالة React-safe لضبط قيمة <select> وإطلاق الأحداث
+    const reactSetInFrame = async (frameEval: (fn: any, arg: any) => Promise<any>, selector: string, optVal: string): Promise<boolean> => {
       try {
-        // انتظر React لإعادة الرسم (500ms بدلاً من 150ms)
-        await this.page!.waitForTimeout(500);
-        const ev = expectedValue.toLowerCase();
-        // استخدام evaluate مباشرةً للتحقق من قيمة الـ select (أكثر موثوقية)
-        const result = await this.page!.evaluate(({ selector, ev }) => {
+        return await frameEval(({ selector, val }: { selector: string; val: string }) => {
           const el = document.querySelector<HTMLSelectElement>(selector);
           if (!el) return false;
-          const curVal = (el.value || "").toLowerCase();
-          const curText = (el.options[el.selectedIndex]?.text || "").toLowerCase().trim();
-          if (!curVal && !curText) return false;
-          return curVal === ev ||
-                 curText.includes(ev) ||
-                 ev.includes(curText);
-        }, { selector, ev });
-        return result;
-      } catch { return false; }
-    };
 
-    // التحقق من النص الحالي المختار عبر evaluate (أكثر موثوقية)
-    const getCurrentSelectedText = async (selector: string): Promise<string> => {
-      try {
-        return await this.page!.evaluate((sel) => {
-          const el = document.querySelector<HTMLSelectElement>(sel);
-          if (!el) return "";
-          return (el.options[el.selectedIndex]?.text || "").toLowerCase().trim();
-        }, selector);
-      } catch { return ""; }
-    };
+          // native setter
+          const ns = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+          if (ns) ns.call(el, val); else el.value = val;
 
-    // اختيار بالكيبورد: ضغط مفاتيح لاختيار القيمة المطلوبة
-    const tryKeyboard = async (selector: string): Promise<boolean> => {
-      try {
-        const loc = this.page!.locator(selector).first();
-        await loc.waitFor({ state: "visible", timeout: 3000 });
-        await loc.click();
-        await this.page!.waitForTimeout(300);
-        const ev = value.toLowerCase();
-        // انتقل بالأسهم لإيجاد الخيار الصحيح (حتى 60 مرة)
-        for (let i = 0; i < 60; i++) {
-          const curText = await getCurrentSelectedText(selector);
-          if (curText.includes(ev) || ev.includes(curText)) {
-            await this.page!.waitForTimeout(200);
-            return true;
-          }
-          await loc.press("ArrowDown");
-          await this.page!.waitForTimeout(60);
-        }
-        // جرّب من البداية للأعلى
-        for (let i = 0; i < 60; i++) {
-          const curText = await getCurrentSelectedText(selector);
-          if (curText.includes(ev) || ev.includes(curText)) {
-            await this.page!.waitForTimeout(200);
-            return true;
-          }
-          await loc.press("ArrowUp");
-          await this.page!.waitForTimeout(60);
-        }
-        return false;
-      } catch { return false; }
-    };
-
-    // استراتيجية 1: selectOption + reactSet (React Fiber) + keyboard
-    const tryPlaywright = async (selector: string): Promise<boolean> => {
-      try {
-        const loc = this.page!.locator(selector).first();
-        await loc.waitFor({ state: "attached", timeout: 3000 });
-
-        // --- جمع كل الخيارات أولاً ---
-        const opts = await loc.locator("option").all();
-        const candidates: string[] = [];
-        for (const o of opts) {
-          const txt = (await o.textContent() || "").trim();
-          const val = (await o.getAttribute("value") || "").trim();
-          if (txt.includes(value) || value.includes(txt.toLowerCase()) ||
-              val === value || val.toLowerCase() === value.toLowerCase() ||
-              txt.toLowerCase() === value.toLowerCase()) {
-            if (val) candidates.push(val);
-          }
-        }
-        // إضافة القيمة الأصلية للمحاولات
-        if (!candidates.includes(value)) candidates.unshift(value);
-
-        for (const candidate of candidates) {
-          // محاولة 1: Playwright selectOption بالقيمة
-          try { await loc.selectOption({ value: candidate }, { timeout: 1500 }); } catch {}
-          if (await verifySelected(selector, value)) return true;
-
-          // محاولة 2: Playwright selectOption بالتسمية
-          try { await loc.selectOption({ label: candidate }, { timeout: 1500 }); } catch {}
-          if (await verifySelected(selector, value)) return true;
-
-          // محاولة 3: React Fiber - استدعاء onChange مباشرة
-          try { await reactSet(selector, candidate); } catch {}
-          if (await verifySelected(selector, value)) return true;
-        }
-
-        // محاولة 4: Playwright selectOption بالتسمية للقيمة الأصلية
-        try { await loc.selectOption({ label: value }, { timeout: 1500 }); } catch {}
-        if (await verifySelected(selector, value)) return true;
-
-        // محاولة 5: اختيار بالكيبورد
-        return tryKeyboard(selector);
-      } catch { return false; }
-    };
-
-    if (await tryPlaywright(`select[name="${hint}"]`)) return true;
-    if (await tryPlaywright(`select[name*="${hint}"]`)) return true;
-    if (await tryPlaywright(`select[id="${hint}"]`))   return true;
-    if (await tryPlaywright(`select[id*="${hint}"]`))  return true;
-
-    // استراتيجية 2: بحث شامل في كل عناصر select بالصفحة
-    try {
-      const found = await this.page.evaluate(({ hint, value }) => {
-        const h = hint.toLowerCase();
-        const v = value.toLowerCase();
-
-        // React-safe setter
-        const reactSetVal = (el: HTMLSelectElement, val: string) => {
-          const nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLSelectElement.prototype, "value"
-          )?.set;
-          if (nativeSetter) nativeSetter.call(el, val);
-          else el.value = val;
+          // DOM events
           el.dispatchEvent(new Event("input",  { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
-        };
 
-        // دالة تجمع كل النصوص المرئية المرتبطة بالعنصر
-        const getElementContext = (sel: HTMLSelectElement): string => {
-          const parts: string[] = [];
-          parts.push((sel.name  || "").toLowerCase());
-          parts.push((sel.id    || "").toLowerCase());
-          // التسمية المرتبطة (label[for])
-          const lbl = sel.labels?.[0]?.textContent || "";
-          parts.push(lbl.toLowerCase());
-          // aria-label
-          parts.push((sel.getAttribute("aria-label") || "").toLowerCase());
-          // title
-          parts.push((sel.getAttribute("title") || "").toLowerCase());
-          // placeholder أو النص المرئي للخيار الأول (كثيراً ما يصف الحقل)
-          const firstOpt = sel.options[0]?.text || "";
-          parts.push(firstOpt.toLowerCase());
-          // النص في العنصر الأب أو الأشقاء المجاورة (للحصول على السياق)
-          const parent = sel.parentElement;
-          if (parent) parts.push((parent.textContent || "").toLowerCase().slice(0, 100));
-          // العنصر السابق مباشرة
-          const prev = sel.previousElementSibling;
-          if (prev) parts.push((prev.textContent || "").toLowerCase().slice(0, 60));
-          return parts.join(" ");
-        };
+          // React Fiber
+          try {
+            const fk = Object.keys(el).find(k => k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance"));
+            if (fk) {
+              let fiber = (el as any)[fk];
+              while (fiber) {
+                const props = fiber.memoizedProps || fiber.pendingProps;
+                if (props?.onChange) {
+                  props.onChange({ target: el, currentTarget: el, bubbles: true, preventDefault: () => {}, stopPropagation: () => {}, persist: () => {} });
+                  break;
+                }
+                fiber = fiber.return;
+              }
+            }
+          } catch (_) {}
 
-        for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
-          const ctx = getElementContext(sel);
-          if (!ctx.includes(h)) continue;
+          return true;
+        }, { selector, val: optVal });
+      } catch { return false; }
+    };
 
-          // ابحث عن الخيار الأنسب
-          const opts = Array.from(sel.options);
-          let match = opts.find(o => o.text.toLowerCase() === v || o.value.toLowerCase() === v);
-          if (!match) match = opts.find(o => o.text.toLowerCase().includes(v) || v.includes(o.text.toLowerCase().trim()));
-          if (!match) match = opts.find(o => o.value === value);
+    // البحث في إطار (frame) عن select مناسب وتحديده
+    const tryInFrame = async (frame: import("playwright").Frame): Promise<boolean> => {
+      try {
+        // جمع معلومات جميع عناصر select في الإطار
+        const selectInfos: Array<{ selector: string; opts: string[]; optVals: string[] }> = await frame.evaluate(({ h }) => {
+          const results: Array<{ selector: string; opts: string[]; optVals: string[] }> = [];
+          for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
+            const ctx = [
+              sel.name, sel.id,
+              sel.getAttribute("aria-label") || "",
+              sel.options[0]?.text || "",
+              sel.labels?.[0]?.textContent || "",
+              (sel.parentElement?.textContent || "").slice(0, 80),
+              (sel.previousElementSibling as HTMLElement | null)?.textContent || "",
+            ].join(" ").toLowerCase();
 
-          if (match) {
-            reactSetVal(sel, match.value);
-            return true;
+            // قبول أي select يطابق hint أو إذا كانت hint مجرد رقم (قد يكون أي select)
+            if (!ctx.includes(h) && h !== "") continue;
+
+            const selector = sel.name
+              ? `select[name="${sel.name}"]`
+              : sel.id ? `#${sel.id}` : "select";
+
+            results.push({
+              selector,
+              opts: Array.from(sel.options).map(o => o.text.trim()),
+              optVals: Array.from(sel.options).map(o => o.value),
+            });
+          }
+          return results;
+        }, { h });
+
+        console.log(`[smartSelect] hint="${hint}" v="${value}" frame=${frame.url()} found ${selectInfos.length} selects`);
+
+        for (const info of selectInfos) {
+          const { selector, opts, optVals } = info;
+
+          // إيجاد الخيار المناسب
+          let matchIdx = -1;
+          matchIdx = opts.findIndex(o => o.toLowerCase() === v);
+          if (matchIdx < 0) matchIdx = opts.findIndex(o => o.toLowerCase().includes(v) || v.includes(o.toLowerCase().trim()));
+          if (matchIdx < 0) matchIdx = optVals.findIndex(ov => ov === value || ov.toLowerCase() === v);
+          // مطابقة رقمية (مثلاً "15" يطابق الخيار ذو القيمة "15")
+          if (matchIdx < 0) matchIdx = optVals.findIndex(ov => ov === value);
+
+          if (matchIdx >= 0) {
+            const optVal = optVals[matchIdx];
+            const optLabel = opts[matchIdx];
+            console.log(`[smartSelect] selecting "${optLabel}" (val="${optVal}") from ${selector}`);
+
+            // محاولة 1: Playwright selectOption مع label
+            try {
+              const loc = frame.locator(selector).first();
+              await loc.selectOption({ label: optLabel }, { timeout: 2000 });
+              console.log(`[smartSelect] selectOption(label) succeeded`);
+              return true;
+            } catch {}
+
+            // محاولة 2: Playwright selectOption مع value
+            try {
+              const loc = frame.locator(selector).first();
+              await loc.selectOption({ value: optVal }, { timeout: 2000 });
+              console.log(`[smartSelect] selectOption(value) succeeded`);
+              return true;
+            } catch {}
+
+            // محاولة 3: React-safe evaluate
+            const ok = await reactSetInFrame(
+              (fn: any, arg: any) => frame.evaluate(fn, arg),
+              selector, optVal
+            );
+            if (ok) {
+              console.log(`[smartSelect] reactSet succeeded`);
+              await frame.waitForTimeout(400);
+              return true;
+            }
+
+            // محاولة 4: Playwright selectOption بالفهرس
+            try {
+              const loc = frame.locator(selector).first();
+              await loc.selectOption({ index: matchIdx }, { timeout: 2000 });
+              console.log(`[smartSelect] selectOption(index) succeeded`);
+              return true;
+            } catch {}
+          } else {
+            console.log(`[smartSelect] no matching option for "${value}" in opts: ${opts.slice(0, 10).join(", ")}`);
           }
         }
-        return false;
-      }, { hint, value });
-      if (found) return true;
-    } catch {}
 
-    // استراتيجية 2b: نفس البحث بالسياق لكن بالكيبورد بدلاً من JS (أكثر موثوقية مع React)
-    try {
-      const selectors = await this.page.evaluate(({ hint }) => {
-        const h = hint.toLowerCase();
-        const getCtx = (sel: HTMLSelectElement) => {
-          const parts: string[] = [];
-          const name = (sel.name || sel.id || sel.getAttribute("aria-label") || "").toLowerCase();
-          parts.push(name);
-          // نص الخيار الأول
-          const first = sel.options[0]?.text?.toLowerCase() || "";
-          parts.push(first);
-          const parent = sel.closest("label") || sel.parentElement;
-          if (parent) parts.push((parent.textContent || "").toLowerCase().slice(0, 100));
-          const prev = sel.previousElementSibling;
-          if (prev) parts.push((prev.textContent || "").toLowerCase().slice(0, 60));
-          return parts.join(" ");
-        };
-        const results: string[] = [];
-        for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
-          const ctx = getCtx(sel);
-          if (!ctx.includes(h)) continue;
-          // بناء selector بناءً على name أو id
-          if (sel.name) results.push(`select[name="${sel.name}"]`);
-          else if (sel.id) results.push(`select#${sel.id}`);
+        // إذا لم يُعثر على select بـ hint، جرّب كل select ويطابق قيمة الخيار
+        if (selectInfos.length === 0) {
+          const foundAny = await frame.evaluate(({ v, value }) => {
+            const ns = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+            const reactSet = (el: HTMLSelectElement, val: string) => {
+              if (ns) ns.call(el, val); else el.value = val;
+              el.dispatchEvent(new Event("input",  { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            };
+            for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
+              const match = Array.from(sel.options).find(o =>
+                o.text.toLowerCase().includes(v) || v.includes(o.text.toLowerCase().trim()) || o.value === value
+              );
+              if (match) { reactSet(sel, match.value); return true; }
+            }
+            return false;
+          }, { v, value });
+          if (foundAny) return true;
         }
-        return results;
-      }, { hint });
 
-      for (const sel of selectors) {
-        if (await tryKeyboard(sel)) return true;
+        return false;
+      } catch (e: any) {
+        console.log(`[smartSelect] frame error: ${e.message}`);
+        return false;
+      }
+    };
+
+    // 1. حاول في الإطار الرئيسي أولاً
+    const mainFrame = this.page.mainFrame();
+    if (await tryInFrame(mainFrame)) return true;
+
+    // 2. حاول في كل إطار فرعي (iframes)
+    for (const frame of this.page.frames()) {
+      if (frame === mainFrame) continue;
+      if (await tryInFrame(frame)) return true;
+    }
+
+    // 3. محاولة النقر على radio button يطابق القيمة (مثلاً الجنس في فيسبوك)
+    try {
+      for (const frame of this.page.frames()) {
+        const radioClicked = await frame.evaluate(({ v, value }) => {
+          // ابحث عن radio buttons
+          for (const radio of Array.from(document.querySelectorAll<HTMLInputElement>("input[type='radio']"))) {
+            const lbl = radio.labels?.[0]?.textContent?.toLowerCase() || "";
+            const ariaLabel = (radio.getAttribute("aria-label") || "").toLowerCase();
+            const radioVal = (radio.value || "").toLowerCase();
+            if (lbl.includes(v) || ariaLabel.includes(v) || radioVal === v || radioVal.includes(v) || v.includes(radioVal)) {
+              radio.click();
+              radio.dispatchEvent(new Event("change", { bubbles: true }));
+              return true;
+            }
+            // أيضاً ابحث في النص المجاور للـ radio
+            const parent = radio.parentElement;
+            const parentText = (parent?.textContent || "").toLowerCase();
+            if (parentText.includes(v) || v.includes(parentText.trim())) {
+              radio.click();
+              radio.dispatchEvent(new Event("change", { bubbles: true }));
+              return true;
+            }
+          }
+          return false;
+        }, { v, value });
+        if (radioClicked) {
+          console.log(`[smartSelect] radio button clicked for "${value}"`);
+          return true;
+        }
       }
     } catch {}
 
-    // استراتيجية 3: آخر محاولة — أول select في الصفحة يطابق القيمة
-    try {
-      const found = await this.page.evaluate(({ value }) => {
-        const v = value.toLowerCase();
-        const reactSetVal = (el: HTMLSelectElement, val: string) => {
-          const s = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
-          if (s) s.call(el, val); else el.value = val;
-          el.dispatchEvent(new Event("input",  { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        };
-        for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
-          const opts = Array.from(sel.options);
-          const match = opts.find(o =>
-            o.text.toLowerCase().includes(v) || v.includes(o.text.toLowerCase().trim())
-          );
-          if (match) { reactSetVal(sel, match.value); return true; }
-        }
-        return false;
-      }, { value });
-      if (found) return true;
-    } catch {}
-
-    // استراتيجية 4: القوائم المنسدلة المخصصة (React Select, MUI, Ant Design, etc.)
+    // 4. القوائم المنسدلة المخصصة (React Select, MUI, etc.)
+    console.log(`[smartSelect] falling back to smartDropdown for hint="${hint}"`);
     return this.smartDropdown(hint, value);
   }
 
@@ -612,7 +527,22 @@ class BrowserAgent extends EventEmitter {
   async getPageStructure(): Promise<string> {
     if (!this.page) return "";
     try {
-      const data = await this.page.evaluate(() => {
+      // البحث في كل الإطارات (الرئيسي + iframes)
+      const frames = this.page.frames();
+      let bestFrame = this.page.mainFrame();
+      // اختر الإطار الذي يحتوي على أكثر عناصر إدخال (على الأرجح النموذج)
+      let maxInputs = 0;
+      for (const frame of frames) {
+        try {
+          const count = await frame.evaluate(() => document.querySelectorAll("input, select, textarea").length);
+          if (count > maxInputs) { maxInputs = count; bestFrame = frame; }
+        } catch {}
+      }
+      if (frames.length > 1) {
+        console.log(`[getPageStructure] frames: ${frames.length}, using frame with ${maxInputs} inputs: ${bestFrame.url()}`);
+      }
+
+      const data = await bestFrame.evaluate(() => {
         const inputs = Array.from(document.querySelectorAll("input, textarea, select")).slice(0, 20).map((el: any) => {
           const base: any = {
             tag: el.tagName.toLowerCase(),
