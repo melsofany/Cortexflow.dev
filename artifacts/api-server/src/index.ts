@@ -234,6 +234,32 @@ io.on("connection", (socket) => {
     });
   });
 
+  // ── User Manual Browser Control (for captcha & real-time interaction) ─────
+  socket.on("userMouseClick",  async (d: { x: number; y: number }) => {
+    if (browserAgent.isReady()) await browserAgent.userClick(d.x, d.y).catch(() => {});
+  });
+  socket.on("userMouseDown",   async (d: { x: number; y: number }) => {
+    if (browserAgent.isReady()) await browserAgent.userMouseDown(d.x, d.y).catch(() => {});
+  });
+  socket.on("userMouseUp",     async (d: { x: number; y: number }) => {
+    if (browserAgent.isReady()) await browserAgent.userMouseUp(d.x, d.y).catch(() => {});
+  });
+  socket.on("userMouseMove",   async (d: { x: number; y: number }) => {
+    if (browserAgent.isReady()) await browserAgent.userMouseMove(d.x, d.y).catch(() => {});
+  });
+  socket.on("userKeyDown",     async (d: { key: string }) => {
+    if (browserAgent.isReady()) await browserAgent.userKeyDown(d.key).catch(() => {});
+  });
+  socket.on("userKeyUp",       async (d: { key: string }) => {
+    if (browserAgent.isReady()) await browserAgent.userKeyUp(d.key).catch(() => {});
+  });
+  socket.on("userType",        async (d: { text: string }) => {
+    if (browserAgent.isReady()) await browserAgent.userType(d.text).catch(() => {});
+  });
+  socket.on("userScroll",      async (d: { x: number; y: number; deltaX: number; deltaY: number }) => {
+    if (browserAgent.isReady()) await browserAgent.userScroll(d.x, d.y, d.deltaX, d.deltaY).catch(() => {});
+  });
+
   // ── Status ────────────────────────────────────────────────────────────────
   socket.on("getStatus", () => {
     socket.emit("status", {

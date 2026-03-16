@@ -47,19 +47,71 @@ class BrowserAgent extends EventEmitter {
     if (this.streamInterval) clearInterval(this.streamInterval);
     this.streamInterval = setInterval(async () => {
       await this.captureAndEmit();
-    }, 150);
+    }, 50);
   }
 
   private async captureAndEmit() {
     if (!this.page || !this.initialized) return;
     try {
-      const screenshot = await this.page.screenshot({ type: "jpeg", quality: 70 });
+      const screenshot = await this.page.screenshot({ type: "jpeg", quality: 60 });
       const base64 = screenshot.toString("base64");
-      this.emit("screenshot", { image: base64 });
+      const url = this.currentUrl || await this.page.url().catch(() => "");
+      this.emit("screenshot", { image: base64, url });
     } catch { }
   }
 
   async captureNow(): Promise<void> {
+    await this.captureAndEmit();
+  }
+
+  async userClick(x: number, y: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.move(x, y);
+    await this.page.mouse.down();
+    await this.page.waitForTimeout(40);
+    await this.page.mouse.up();
+    await this.captureAndEmit();
+  }
+
+  async userMouseMove(x: number, y: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.move(x, y);
+  }
+
+  async userMouseDown(x: number, y: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.move(x, y);
+    await this.page.mouse.down();
+    await this.captureAndEmit();
+  }
+
+  async userMouseUp(x: number, y: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.up();
+    await this.captureAndEmit();
+  }
+
+  async userKeyDown(key: string): Promise<void> {
+    if (!this.page) return;
+    await this.page.keyboard.down(key);
+    await this.captureAndEmit();
+  }
+
+  async userKeyUp(key: string): Promise<void> {
+    if (!this.page) return;
+    await this.page.keyboard.up(key);
+  }
+
+  async userType(text: string): Promise<void> {
+    if (!this.page) return;
+    await this.page.keyboard.type(text, { delay: 0 });
+    await this.captureAndEmit();
+  }
+
+  async userScroll(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.move(x, y);
+    await this.page.mouse.wheel(deltaX, deltaY);
     await this.captureAndEmit();
   }
 
