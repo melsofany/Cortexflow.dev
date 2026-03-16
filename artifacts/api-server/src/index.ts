@@ -32,49 +32,89 @@ browserAgent.on("screenshot", (data: { image: string }) => {
   }
 });
 
+// ── Track last completed task result for reconnect delivery ─────────────────
+let lastCompletedTask: { taskId: string; result: string } | null = null;
+let lastFailedTask:    { taskId: string; error: string }   | null = null;
+
 // ── Socket.io connections ────────────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log(`[Socket.io] Client connected: ${socket.id}`);
+
+  // Send server status immediately on connect
+  const tasks = taskStore.getAllTasks();
+  const runningTask = tasks.find(t => t.status === "running");
+  socket.emit("status", {
+    tasks,
+    logs: taskStore.getLogs(10),
+    ollamaAvailable: ollamaClient.isAvailable(),
+    activeModel: ollamaClient.getCurrentModel(),
+    browserReady: browserAgent.isReady(),
+    timestamp: new Date(),
+  });
+
+  // If a task just finished (within last 30s), re-deliver the result
+  if (lastCompletedTask) {
+    socket.emit("taskSuccess", lastCompletedTask);
+    lastCompletedTask = null;
+  }
+  if (lastFailedTask) {
+    socket.emit("taskFail", lastFailedTask);
+    lastFailedTask = null;
+  }
+
+  // If a task is currently running, notify the client
+  if (runningTask) {
+    socket.emit("taskStart", {
+      taskId: runningTask.taskId,
+      description: runningTask.description,
+      type: runningTask.type,
+    });
+  }
 
   // ── Submit + execute task ─────────────────────────────────────────────────
   socket.on("submitTask", async (data) => {
     try {
       const task = taskStore.createTask({
         description: data.description || data.task || "",
-        type: data.type || "browser",
+        type: data.type || "ai",
         url: data.url,
         priority: typeof data.priority === "number" ? data.priority : 0,
       });
 
-      socket.emit("taskCreated", task);
+      console.log(`[Task] Submitted: "${task.description}" (type=${task.type}, id=${task.taskId})`);
+
+      io.emit("taskCreated", task);
       io.emit("taskUpdate", task);
 
-      const onThinking     = (d: any) => { if (d.taskId === task.taskId) socket.emit("thinking", d); };
-      const onAgentActivity = (d: any) => { if (d.taskId === task.taskId) socket.emit("agentActivity", d); };
-      const onTaskPlan      = (d: any) => { if (d.taskId === task.taskId) socket.emit("taskPlan", d); };
-      const onStart     = (d: any) => {
+      const onThinking      = (d: any) => { if (d.taskId === task.taskId) io.emit("thinking", d); };
+      const onAgentActivity = (d: any) => { if (d.taskId === task.taskId) io.emit("agentActivity", d); };
+      const onTaskPlan      = (d: any) => { if (d.taskId === task.taskId) io.emit("taskPlan", d); };
+      const onStart = (d: any) => {
         if (d.taskId === task.taskId) {
-          socket.emit("taskStart", d);
+          io.emit("taskStart", { ...d, type: task.type, description: task.description });
           io.emit("taskUpdate", taskStore.getTask(task.taskId));
         }
       };
-      const onSuccess   = (d: any) => {
+      const onSuccess = (d: any) => {
         if (d.taskId === task.taskId) {
-          socket.emit("taskSuccess", d);
-          io.emit("taskUpdate", taskStore.getTask(task.taskId));
-          cleanup();
-        }
-      };
-      const onFail      = (d: any) => {
-        if (d.taskId === task.taskId) {
-          socket.emit("taskFail", d);
+          console.log(`[Task] Completed: "${task.description}" → ${d.result?.substring(0, 80)}...`);
+          lastCompletedTask = { taskId: d.taskId, result: d.result };
+          io.emit("taskSuccess", d);
           io.emit("taskUpdate", taskStore.getTask(task.taskId));
           cleanup();
         }
       };
-      // ── أحداث ask/needInput ─────────────────────────────────────────────
+      const onFail = (d: any) => {
+        if (d.taskId === task.taskId) {
+          console.log(`[Task] Failed: "${task.description}" → ${d.error || d.reason}`);
+          lastFailedTask = { taskId: d.taskId, error: d.error || d.reason || "خطأ غير معروف" };
+          io.emit("taskFail", d);
+          io.emit("taskUpdate", taskStore.getTask(task.taskId));
+          cleanup();
+        }
+      };
       const onNeedInput = (d: any) => {
-        if (d.taskId === task.taskId) socket.emit("agentNeedsInput", d);
+        if (d.taskId === task.taskId) io.emit("agentNeedsInput", d);
       };
       const onUserInput = (data: any) => {
         if (data.taskId === task.taskId) {
@@ -102,7 +142,8 @@ io.on("connection", (socket) => {
       socket.on("userInput", onUserInput);
 
       agentRunner.executeTask(task).catch((err: any) => {
-        socket.emit("error", { message: err.message });
+        console.error(`[Task] Execution error:`, err.message);
+        io.emit("taskFail", { taskId: task.taskId, error: err.message });
         cleanup();
       });
     } catch (err: any) {
@@ -116,13 +157,13 @@ io.on("connection", (socket) => {
     if (!task) { socket.emit("error", { message: "Task not found" }); return; }
     if (task.status === "running") return;
 
-    const onThinking = (d: any) => { if (d.taskId === taskId) socket.emit("thinking", d); };
-    const onStart    = (d: any) => { if (d.taskId === taskId) socket.emit("taskStart", d); };
+    const onThinking = (d: any) => { if (d.taskId === taskId) io.emit("thinking", d); };
+    const onStart    = (d: any) => { if (d.taskId === taskId) io.emit("taskStart", d); };
     const onSuccess  = (d: any) => {
-      if (d.taskId === taskId) { socket.emit("taskSuccess", d); io.emit("taskUpdate", taskStore.getTask(taskId)); cleanup(); }
+      if (d.taskId === taskId) { io.emit("taskSuccess", d); io.emit("taskUpdate", taskStore.getTask(taskId)); cleanup(); }
     };
     const onFail = (d: any) => {
-      if (d.taskId === taskId) { socket.emit("taskFail", d); io.emit("taskUpdate", taskStore.getTask(taskId)); cleanup(); }
+      if (d.taskId === taskId) { io.emit("taskFail", d); io.emit("taskUpdate", taskStore.getTask(taskId)); cleanup(); }
     };
     const cleanup = () => {
       agentRunner.off("thinking", onThinking);
@@ -162,11 +203,9 @@ io.on("connection", (socket) => {
 
   // ── Status ────────────────────────────────────────────────────────────────
   socket.on("getStatus", () => {
-    const tasks = taskStore.getAllTasks();
-    const logs  = taskStore.getLogs(10);
     socket.emit("status", {
-      tasks,
-      logs,
+      tasks: taskStore.getAllTasks(),
+      logs: taskStore.getLogs(10),
       ollamaAvailable: ollamaClient.isAvailable(),
       activeModel: ollamaClient.getCurrentModel(),
       browserReady: browserAgent.isReady(),
@@ -186,7 +225,7 @@ io.on("connection", (socket) => {
         taskStore.updateTask(t.taskId, { status: 'failed', error: 'أُوقفت من قِبل المستخدم' });
       }
     });
-    socket.emit("taskFail", { reason: 'stopped_by_user' });
+    io.emit("taskFail", { reason: 'stopped_by_user', error: 'أُوقفت من قِبل المستخدم' });
   });
 
   socket.on("disconnect", () => {

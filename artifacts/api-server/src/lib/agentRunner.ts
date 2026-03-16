@@ -275,7 +275,7 @@ class AgentRunner extends EventEmitter {
   }
 
   private shouldUsePythonAgent(category: string): boolean {
-    return ["code", "math", "agent", "reasoning"].includes(category);
+    return ["math"].includes(category);
   }
 
   private emitStep(taskId: string, step: string, content: string) {

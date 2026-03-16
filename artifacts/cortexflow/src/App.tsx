@@ -785,19 +785,30 @@ const App: React.FC = () => {
     });
 
     socket.on('taskStart', (d: any) => {
-      addSystem(`بدأت المهمة`, 'info');
+      addSystem(`⚡ بدأ التنفيذ: ${d.description || ''}`, 'info');
       setIsAgentBusy(true);
+      // For browser tasks switch to browser tab on mobile
+      if (d.type === 'browser' || (d.description || '').match(/افتح|تصفح|يوتيوب|فيسبوك|google|youtube|موقع/i)) {
+        setActiveTab('browser');
+      }
     });
 
     socket.on('taskSuccess', (d: any) => {
       setIsAgentBusy(false);
       setAgentActivity(null);
-      if (d?.result) addAgent(d.result, 'completed');
+      setActiveTab('chat');
+      if (d?.result) {
+        addAgent(d.result, 'completed');
+      } else {
+        addSystem('✅ اكتملت المهمة بنجاح', 'success');
+      }
     });
 
-    socket.on('taskFail', () => {
+    socket.on('taskFail', (d: any) => {
       setIsAgentBusy(false);
       setAgentActivity(null);
+      setActiveTab('chat');
+      addSystem(`❌ فشلت المهمة: ${d?.error || d?.reason || 'خطأ غير معروف'}`, 'error');
     });
 
     socket.on('thinking', (d: { content: string }) => {

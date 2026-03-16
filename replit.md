@@ -21,11 +21,11 @@ CortexFlow is a professional multi-agent AI platform. It uses a Planner Agent to
 ```text
 User (Frontend App.tsx)
   ↓  socket.io /api/socket
-API Server (Express, port 8080)
+API Server (Express, port 8080)   ← io.emit() broadcasts to ALL clients
   ↓  agentRunner.ts → classifies task
   ├── Browser tasks → Playwright/Chromium browser agent
-  ├── Complex tasks → Python Agent Service (port 8090)
-  └── General/Code/Research tasks → Multi-Agent System:
+  ├── Math tasks → Python Agent Service (port 8090)
+  └── Code/Research/Creative/General → Multi-Agent System:
         ↓
       PlannerAgent → TaskPlan (steps + agents)
         ↓
@@ -98,5 +98,12 @@ lib/
 ## Known Performance Notes
 
 - All inference runs on CPU (no GPU) — each LLM call takes 15-60s depending on model size
-- OODA loop makes 5+ LLM calls per task (cold start ~2min, warm ~1min)
+- Multi-agent plan: 1 planning call + N step calls + 1 review call (typically 5-8 total LLM calls)
 - Model auto-selection prefers smaller models for speed unless performance data shows better results
+
+## Bug Fixes Applied
+
+- **Socket broadcast fix**: Changed `socket.emit()` → `io.emit()` for task events so results reach ALL connected clients, not just the original socket (fixes results lost on reconnect)
+- **Reconnect delivery**: Added `lastCompletedTask` cache to re-deliver results to newly connected clients
+- **Task routing**: Code/agent/reasoning tasks now use multi-agent system instead of Python agent (only math still uses Python agent for precise calculation)
+- **Tab switching**: Browser tasks auto-switch to browser tab on mobile; task completion switches back to chat tab
