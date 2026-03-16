@@ -5,7 +5,9 @@ import {
   Loader2, RefreshCw, History, Monitor,
   Terminal, AlertTriangle, X, Check, Globe,
   Eye, Zap, Play, Layers, Clock, Activity,
-  ArrowLeft, ArrowRight, RotateCcw, Keyboard
+  ArrowLeft, ArrowRight, RotateCcw, Keyboard,
+  Search, Code2, ListChecks, ChevronRight, Sparkles,
+  Network, BookOpen, FlaskConical, LayoutDashboard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -20,41 +22,77 @@ interface Message {
   step?: string;
   data?: any;
 }
-interface Task { taskId: string; description: string; status: string; createdAt: string; }
-type ActiveTab = 'chat' | 'browser';
 
-// ─── Step meta ────────────────────────────────────────────────────────────────
+interface Task { taskId: string; description: string; status: string; createdAt: string; }
+
+interface PlanStep {
+  id: number;
+  title: string;
+  description: string;
+  agent: 'browser' | 'coder' | 'researcher' | 'reviewer' | 'general' | 'planner';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  result?: string;
+}
+
+interface TaskPlan {
+  goal: string;
+  steps: PlanStep[];
+  category: string;
+  estimatedTime: string;
+  createdAt: Date;
+}
+
+interface AgentActivity {
+  agentRole: string;
+  stepId: number;
+  status: 'idle' | 'thinking' | 'acting' | 'done' | 'failed';
+  message: string;
+  timestamp: Date;
+}
+
+type ActiveTab = 'chat' | 'browser' | 'plan';
+interface InputRequest { taskId: string; question: string; }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 const STEP_META: Record<string, { icon: any; color: string; label: string }> = {
-  OBSERVE:  { icon: Eye,          color: 'text-blue-400',    label: 'مراقبة'  },
-  THINK:    { icon: Brain,        color: 'text-violet-400',  label: 'تفكير'   },
-  PLAN:     { icon: Layers,       color: 'text-indigo-400',  label: 'تخطيط'   },
-  ACT:      { icon: Zap,          color: 'text-amber-400',   label: 'تنفيذ'   },
-  VERIFY:   { icon: CheckCircle2, color: 'text-emerald-400', label: 'تحقق'    },
-  MEMORY:   { icon: Clock,        color: 'text-pink-400',    label: 'ذاكرة'   },
-  PLANNING: { icon: Activity,     color: 'text-cyan-400',    label: 'وضع خطة' },
-  ASK:      { icon: User,         color: 'text-yellow-400',  label: 'طلب بيانات' },
-  ERR:      { icon: AlertTriangle,color: 'text-red-400',     label: 'خطأ'     },
-  MODEL:    { icon: Brain,        color: 'text-slate-400',   label: 'نموذج'   },
+  OBSERVE:  { icon: Eye,          color: 'text-blue-400',    label: 'مراقبة'    },
+  THINK:    { icon: Brain,        color: 'text-violet-400',  label: 'تفكير'     },
+  PLAN:     { icon: Layers,       color: 'text-indigo-400',  label: 'تخطيط'     },
+  PLANNING: { icon: Activity,     color: 'text-cyan-400',    label: 'وضع خطة'   },
+  ACT:      { icon: Zap,          color: 'text-amber-400',   label: 'تنفيذ'     },
+  VERIFY:   { icon: CheckCircle2, color: 'text-emerald-400', label: 'تحقق'      },
+  MEMORY:   { icon: Clock,        color: 'text-pink-400',    label: 'ذاكرة'     },
+  ASK:      { icon: User,         color: 'text-yellow-400',  label: 'طلب بيانات'},
+  ERR:      { icon: AlertTriangle,color: 'text-red-400',     label: 'خطأ'       },
+  MODEL:    { icon: Brain,        color: 'text-slate-400',   label: 'نموذج'     },
 };
 const STEP_ORDER = ['OBSERVE','THINK','PLAN','ACT','VERIFY'];
+
+const AGENT_META: Record<string, { icon: any; color: string; bg: string; label: string }> = {
+  planner:    { icon: Brain,          color: 'text-violet-400',  bg: 'bg-violet-500/15 border-violet-500/30',  label: 'وكيل التخطيط'  },
+  browser:    { icon: Globe,          color: 'text-blue-400',    bg: 'bg-blue-500/15 border-blue-500/30',      label: 'وكيل المتصفح'  },
+  coder:      { icon: Code2,          color: 'text-amber-400',   bg: 'bg-amber-500/15 border-amber-500/30',    label: 'وكيل البرمجة'  },
+  researcher: { icon: Search,         color: 'text-cyan-400',    bg: 'bg-cyan-500/15 border-cyan-500/30',      label: 'وكيل البحث'    },
+  reviewer:   { icon: CheckCircle2,   color: 'text-emerald-400', bg: 'bg-emerald-500/15 border-emerald-500/30',label: 'وكيل المراجعة' },
+  general:    { icon: Zap,            color: 'text-indigo-400',  bg: 'bg-indigo-500/15 border-indigo-500/30',  label: 'الوكيل العام'  },
+};
+
 const uid = () => Math.random().toString(36).slice(2, 11);
 
-// ─── StepBadge (stable) ──────────────────────────────────────────────────────
+// ─── StepBadge ────────────────────────────────────────────────────────────────
 const StepBadge = memo(({ step }: { step?: string }) => {
   if (!step || !STEP_META[step]) return null;
   const { icon: Icon, color, label } = STEP_META[step];
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider ${color} mb-1`}>
-      <Icon size={10} /> {label}
+      <Icon size={10}/> {label}
     </span>
   );
 });
 
-// ─── MessageItem (stable, never re-mounts) ───────────────────────────────────
+// ─── MessageItem ──────────────────────────────────────────────────────────────
 const MessageItem = memo(({ msg, tasks, onResume }: {
-  msg: Message;
-  tasks: Task[];
-  onResume: (id: string) => void;
+  msg: Message; tasks: Task[]; onResume: (id: string) => void;
 }) => {
   if (msg.type === 'system') {
     const c: Record<string, string> = {
@@ -66,7 +104,7 @@ const MessageItem = memo(({ msg, tasks, onResume }: {
     return (
       <div className="flex justify-center my-2 px-4">
         <div className={`px-3 py-1 rounded-full text-[11px] flex items-center gap-1.5 border ${c[msg.level||'info']}`}>
-          {msg.level === 'success' ? <Check size={11}/> : <Info size={11}/>}
+          {msg.level==='success' ? <Check size={11}/> : <Info size={11}/>}
           {msg.text}
         </div>
       </div>
@@ -88,7 +126,6 @@ const MessageItem = memo(({ msg, tasks, onResume }: {
           {isThinking ? <Brain size={15} className="text-violet-400"/> : <Bot size={15} className="text-indigo-400"/>}
         </div>
       )}
-
       <div className={`flex flex-col max-w-[82%] ${isUser ? 'items-end' : 'items-start'}`}>
         {isThinking && <StepBadge step={msg.step}/>}
         <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed ${
@@ -120,7 +157,6 @@ const MessageItem = memo(({ msg, tasks, onResume }: {
           {new Date(msg.timestamp).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}
         </span>
       </div>
-
       {isUser && (
         <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0 ml-3 mt-0.5">
           <User size={15} className="text-slate-300"/>
@@ -131,7 +167,6 @@ const MessageItem = memo(({ msg, tasks, onResume }: {
 });
 
 // ─── InputRequestBanner ───────────────────────────────────────────────────────
-interface InputRequest { taskId: string; question: string; }
 const InputRequestBanner = memo(({ req, onAnswer }: { req: InputRequest; onAnswer: (ans: string) => void }) => {
   const [val, setVal] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -146,20 +181,15 @@ const InputRequestBanner = memo(({ req, onAnswer }: { req: InputRequest; onAnswe
       <p className="text-yellow-100 text-sm mb-2 leading-relaxed">{req.question}</p>
       <div className="flex gap-2">
         <input
-          ref={inputRef}
-          type="text"
-          value={val}
+          ref={inputRef} type="text" value={val}
           onChange={e => setVal(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') submit(); }}
           placeholder="اكتب الإجابة هنا..."
           className="flex-1 bg-slate-800/70 border border-slate-600/50 rounded-lg px-3 py-1.5 text-sm text-white placeholder-slate-500 outline-none focus:border-yellow-500/60"
           dir="auto"
         />
-        <button
-          onClick={submit}
-          disabled={!val.trim()}
-          className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-white text-xs font-bold transition-colors"
-        >
+        <button onClick={submit} disabled={!val.trim()}
+          className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-white text-xs font-bold transition-colors">
           إرسال
         </button>
       </div>
@@ -167,20 +197,181 @@ const InputRequestBanner = memo(({ req, onAnswer }: { req: InputRequest; onAnswe
   );
 });
 
-// ─── ChatPanel (stable component outside App) ─────────────────────────────────
-interface ChatPanelProps {
-  messages: Message[];
-  tasks: Task[];
-  isConnected: boolean;
+// ─── PlanPanel ────────────────────────────────────────────────────────────────
+const PlanPanel = memo(({ plan, agentActivity, isAgentBusy }: {
+  plan: TaskPlan | null;
+  agentActivity: AgentActivity | null;
   isAgentBusy: boolean;
-  currentStep: string | null;
-  inputValue: string;
-  setInputValue: (v: string) => void;
-  onSubmit: () => void;
-  onStop: () => void;
-  onResume: (id: string) => void;
-  pendingInputRequest: InputRequest | null;
-  onUserAnswer: (ans: string) => void;
+}) => {
+  if (!plan && !isAgentBusy) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full px-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-600/20 to-indigo-600/20 border border-violet-500/20 flex items-center justify-center mb-4">
+          <Network size={28} className="text-violet-400"/>
+        </div>
+        <h3 className="text-white font-semibold mb-2">نظام الوكلاء المتعددين</h3>
+        <p className="text-slate-500 text-sm leading-relaxed max-w-xs">
+          عند إرسال مهمة، يقوم وكيل التخطيط بتحليلها وتوزيعها على الوكلاء المتخصصين تلقائياً
+        </p>
+        <div className="mt-6 grid grid-cols-2 gap-3 w-full max-w-sm">
+          {Object.entries(AGENT_META).map(([role, meta]) => (
+            <div key={role} className={`p-3 rounded-xl border ${meta.bg} flex items-center gap-2`}>
+              <meta.icon size={14} className={meta.color}/>
+              <span className="text-xs text-slate-400">{meta.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!plan && isAgentBusy) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <div className="w-14 h-14 rounded-full border-2 border-slate-800 border-t-violet-500 animate-spin"/>
+        <p className="text-slate-400 text-sm">وكيل التخطيط يحلل المهمة...</p>
+        {agentActivity && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+            className={`px-4 py-2.5 rounded-xl border flex items-center gap-2 ${AGENT_META[agentActivity.agentRole]?.bg || 'bg-slate-800 border-slate-700'}`}
+          >
+            {React.createElement(AGENT_META[agentActivity.agentRole]?.icon || Zap, {
+              size: 14,
+              className: AGENT_META[agentActivity.agentRole]?.color || 'text-slate-400',
+            })}
+            <span className="text-xs text-slate-300">{agentActivity.message}</span>
+          </motion.div>
+        )}
+      </div>
+    );
+  }
+
+  if (!plan) return null;
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-violet-900/20 to-indigo-900/20 border border-violet-500/20 rounded-2xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-7 h-7 rounded-lg bg-violet-500/20 flex items-center justify-center">
+            <ListChecks size={14} className="text-violet-400"/>
+          </div>
+          <span className="text-violet-300 text-xs font-bold uppercase tracking-wider">خطة التنفيذ</span>
+          <span className="ml-auto text-[10px] text-slate-500 flex items-center gap-1">
+            <Clock size={10}/> {plan.estimatedTime}
+          </span>
+        </div>
+        <p className="text-white text-sm font-medium leading-relaxed">{plan.goal}</p>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-[10px] px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full">
+            {plan.category}
+          </span>
+          <span className="text-[10px] text-slate-500">{plan.steps.length} خطوات</span>
+        </div>
+      </div>
+
+      {/* Active agent banner */}
+      <AnimatePresence>
+        {agentActivity && agentActivity.status !== 'done' && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            className={`p-3 rounded-xl border flex items-center gap-3 ${AGENT_META[agentActivity.agentRole]?.bg || 'bg-slate-800 border-slate-700'}`}
+          >
+            <div className="relative flex-shrink-0">
+              {React.createElement(AGENT_META[agentActivity.agentRole]?.icon || Zap, {
+                size: 16,
+                className: AGENT_META[agentActivity.agentRole]?.color || 'text-slate-400',
+              })}
+              {agentActivity.status === 'thinking' && (
+                <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-violet-500 animate-pulse"/>
+              )}
+              {agentActivity.status === 'acting' && (
+                <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500 animate-pulse"/>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-slate-200 truncate">{agentActivity.message}</p>
+              <p className={`text-[10px] ${AGENT_META[agentActivity.agentRole]?.color || 'text-slate-400'}`}>
+                {AGENT_META[agentActivity.agentRole]?.label}
+                {agentActivity.status === 'thinking' ? ' — يفكر...' : agentActivity.status === 'acting' ? ' — يُنفّذ...' : ''}
+              </p>
+            </div>
+            <Loader2 size={14} className="text-slate-500 animate-spin flex-shrink-0"/>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Steps */}
+      <div className="flex flex-col gap-2">
+        {plan.steps.map((step, idx) => {
+          const meta = AGENT_META[step.agent] || AGENT_META.general;
+          const isActive = agentActivity?.stepId === step.id && agentActivity.status !== 'done';
+          const isDone = agentActivity ? agentActivity.stepId > step.id || (agentActivity.stepId === step.id && agentActivity.status === 'done') : false;
+
+          return (
+            <motion.div
+              key={step.id}
+              initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: idx * 0.08 }}
+              className={`relative p-3.5 rounded-xl border transition-all ${
+                isActive
+                  ? `${meta.bg} shadow-sm`
+                  : isDone
+                  ? 'bg-emerald-500/5 border-emerald-500/20'
+                  : 'bg-slate-900/60 border-slate-800/60'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                {/* Step number / status icon */}
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold ${
+                  isDone      ? 'bg-emerald-500/20 text-emerald-400'
+                  : isActive  ? `${meta.bg} ${meta.color}`
+                              : 'bg-slate-800 text-slate-500'
+                }`}>
+                  {isDone ? <Check size={13}/> : isActive ? <Loader2 size={13} className="animate-spin"/> : step.id}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className={`text-sm font-medium ${isDone ? 'text-emerald-300' : isActive ? 'text-white' : 'text-slate-400'}`}>
+                      {step.title}
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${meta.bg} ${meta.color} flex items-center gap-1 ml-auto flex-shrink-0`}>
+                      <meta.icon size={9}/> {meta.label}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">{step.description}</p>
+                </div>
+              </div>
+
+              {/* Connector line */}
+              {idx < plan.steps.length - 1 && (
+                <div className={`absolute left-[27px] bottom-[-9px] w-0.5 h-2 ${isDone ? 'bg-emerald-500/40' : 'bg-slate-700/60'}`}/>
+              )}
+            </motion.div>
+          );
+        })}
+      </div>
+
+      {/* Memory indicator */}
+      <div className="p-3 bg-pink-500/5 border border-pink-500/15 rounded-xl flex items-center gap-2">
+        <Clock size={13} className="text-pink-400 flex-shrink-0"/>
+        <div>
+          <p className="text-xs text-slate-400">نظام الذاكرة نشط</p>
+          <p className="text-[10px] text-slate-600">تحفظ السياق والنتائج عبر الخطوات</p>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ─── ChatPanel ────────────────────────────────────────────────────────────────
+interface ChatPanelProps {
+  messages: Message[]; tasks: Task[]; isConnected: boolean;
+  isAgentBusy: boolean; currentStep: string | null;
+  inputValue: string; setInputValue: (v: string) => void;
+  onSubmit: () => void; onStop: () => void; onResume: (id: string) => void;
+  pendingInputRequest: InputRequest | null; onUserAnswer: (ans: string) => void;
 }
 const ChatPanel = memo(({
   messages, tasks, isConnected, isAgentBusy, currentStep,
@@ -190,9 +381,7 @@ const ChatPanel = memo(({
   const endRef  = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const handleKey = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -208,23 +397,28 @@ const ChatPanel = memo(({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto py-4" style={{ overscrollBehavior: 'contain' }}>
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-6 py-16 text-center">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-600/30 to-violet-600/30 border border-indigo-500/20 flex items-center justify-center mb-6">
               <Bot size={36} className="text-indigo-400"/>
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">كيف يمكنني مساعدتك؟</h2>
-            <p className="text-slate-500 text-sm max-w-xs leading-relaxed mb-10">
-              يمكنني تصفح الإنترنت، إنشاء الحسابات، والبحث عن المعلومات تلقائياً
+            <h2 className="text-2xl font-bold text-white mb-2">CortexFlow</h2>
+            <p className="text-slate-500 text-sm max-w-xs leading-relaxed mb-2">
+              وكيل ذكاء اصطناعي متكامل بنظام وكلاء متعددين وتخطيط ذكي
             </p>
+            <div className="flex items-center gap-3 mb-8 text-[11px] text-slate-600">
+              <span className="flex items-center gap-1"><Brain size={10} className="text-violet-400"/> تخطيط</span>
+              <span className="flex items-center gap-1"><Globe size={10} className="text-blue-400"/> تصفح</span>
+              <span className="flex items-center gap-1"><Code2 size={10} className="text-amber-400"/> برمجة</span>
+              <span className="flex items-center gap-1"><Search size={10} className="text-cyan-400"/> بحث</span>
+            </div>
             <div className="grid grid-cols-1 gap-3 w-full max-w-sm">
               {[
                 'ابحث عن آخر أخبار الذكاء الاصطناعي',
-                'افتح موقع الجزيرة وأظهر آخر الأخبار',
-                'ابحث عن أفضل مطاعم في الرياض',
-                'اذهب إلى يوتيوب وشغّل أغنية هادئة',
+                'افتح يوتيوب وابحث عن موسيقى هادئة',
+                'اكتب كود Python لحساب الأعداد الأولية',
+                'اشرح لي كيف يعمل نظام GPT-4',
               ].map((s, i) => (
                 <button key={i} onClick={() => setInputValue(s)}
                   className="p-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl text-right text-sm text-slate-400 hover:text-slate-200 hover:border-indigo-500/30 hover:bg-slate-800/70 transition-all active:scale-95 touch-manipulation">
@@ -241,13 +435,10 @@ const ChatPanel = memo(({
         )}
       </div>
 
-      {/* Input area */}
       <div className="p-4 border-t border-slate-800/50 bg-[#0d0d15] flex-shrink-0">
-        {/* Agent asks for user input */}
         {pendingInputRequest && (
           <InputRequestBanner req={pendingInputRequest} onAnswer={onUserAnswer}/>
         )}
-        {/* Step progress bar */}
         {isAgentBusy && currentStep && STEP_META[currentStep] && (
           <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-slate-800/50 rounded-xl border border-slate-700/30">
             {React.createElement(STEP_META[currentStep].icon, { size: 14, className: STEP_META[currentStep].color })}
@@ -275,22 +466,14 @@ const ChatPanel = memo(({
             className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-2xl px-4 py-3 text-slate-200 placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/40 resize-none min-h-[48px] max-h-[120px] text-sm transition-all"
             style={{ direction: 'rtl' }}
           />
-          {/* Stop button — shown when agent is busy AND input is empty */}
           {isAgentBusy && !inputValue.trim() ? (
-            <button
-              onClick={onStop}
-              className="w-12 h-12 bg-red-600 hover:bg-red-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-red-500/20 active:scale-95 touch-manipulation"
-              title="إيقاف المهمة"
-            >
+            <button onClick={onStop}
+              className="w-12 h-12 bg-red-600 hover:bg-red-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-red-500/20 active:scale-95 touch-manipulation">
               <X size={18}/>
             </button>
           ) : (
-            <button
-              onClick={onSubmit}
-              disabled={!inputValue.trim() || !isConnected}
-              className="w-12 h-12 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-indigo-500/20 active:scale-95 touch-manipulation"
-              title={isAgentBusy ? 'أضف إلى قائمة الانتظار' : 'إرسال'}
-            >
+            <button onClick={onSubmit} disabled={!inputValue.trim() || !isConnected}
+              className="w-12 h-12 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl flex items-center justify-center flex-shrink-0 transition-all shadow-lg shadow-indigo-500/20 active:scale-95 touch-manipulation">
               {isAgentBusy ? <Loader2 size={18} className="animate-spin"/> : <Send size={18}/>}
             </button>
           )}
@@ -300,12 +483,10 @@ const ChatPanel = memo(({
   );
 });
 
-// ─── BrowserPanel (stable component outside App) ──────────────────────────────
+// ─── BrowserPanel ─────────────────────────────────────────────────────────────
 interface BrowserPanelProps {
-  frameSrc: string | null;
-  browserHasFrame: boolean;
-  isAgentBusy: boolean;
-  onEmit: (type: string, params: any) => void;
+  frameSrc: string | null; browserHasFrame: boolean;
+  isAgentBusy: boolean; onEmit: (type: string, params: any) => void;
 }
 const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: BrowserPanelProps) => {
   const browserImgRef = useRef<HTMLImageElement>(null);
@@ -313,7 +494,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
   const [keyboardText, setKeyboardText] = useState('');
   const [urlBarValue, setUrlBarValue]   = useState('');
 
-  // Touch state
   const touchStartRef  = useRef<{ x: number; y: number; time: number } | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef     = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -326,18 +506,15 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
       x: Math.round(((clientX - r.left) / r.width)  * 1280),
       y: Math.round(((clientY - r.top)  / r.height) * 720),
     };
-  }, [browserImgRef]);
+  }, []);
 
-  // ── Touch handlers ────────────────────────────────────────────────────────
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const t = e.touches[0];
     touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
-
-    // Long-press → right click (500ms)
     longPressTimer.current = setTimeout(() => {
       const coords = getBrowserCoords(t.clientX, t.clientY);
       onEmit('contextmenu', { ...coords, button: 'right' });
-      touchStartRef.current = null; // prevent tap fire
+      touchStartRef.current = null;
     }, 500);
   }, [getBrowserCoords, onEmit]);
 
@@ -347,7 +524,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
       const dy = touchStartRef.current.y - t.clientY;
       const dx = touchStartRef.current.x - t.clientX;
       if (Math.abs(dy) > 4 || Math.abs(dx) > 4) {
-        // Cancel long-press if moved
         if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
         onEmit('scroll', { deltaX: dx * 1.5, deltaY: dy * 1.5 });
         touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
@@ -358,7 +534,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
     if (!touchStartRef.current) return;
-
     const touch = e.changedTouches[0];
     const start = touchStartRef.current;
     const dx = touch.clientX - start.x;
@@ -366,12 +541,8 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
     const dist = Math.sqrt(dx*dx + dy*dy);
     const dt = Date.now() - start.time;
     touchStartRef.current = null;
-
-    if (dist > 10 || dt > 500) return; // moved or long press
-
+    if (dist > 10 || dt > 500) return;
     const coords = getBrowserCoords(touch.clientX, touch.clientY);
-
-    // Double-tap detection (within 300ms of last tap in same area)
     const now = Date.now();
     if (lastTapRef.current) {
       const lt = lastTapRef.current;
@@ -383,12 +554,9 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
       }
     }
     lastTapRef.current = { x: touch.clientX, y: touch.clientY, time: now };
-
-    // Single tap → click
     onEmit('click', { ...coords, button: 'left' });
   }, [getBrowserCoords, onEmit]);
 
-  // ── Mouse handlers ────────────────────────────────────────────────────────
   const handleMouseEvent = useCallback((e: React.MouseEvent) => {
     const coords = getBrowserCoords(e.clientX, e.clientY);
     onEmit(e.type, { ...coords, button: e.button === 2 ? 'right' : 'left' });
@@ -420,7 +588,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
 
   return (
     <div className="flex flex-col h-full bg-[#0e0e16]">
-      {/* Browser chrome */}
       <div className="flex items-center gap-2 px-3 py-2 bg-[#12121c] border-b border-slate-800/60 flex-shrink-0">
         <button onClick={() => onEmit('go_back',{})}
           className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 active:bg-slate-700 transition-all touch-manipulation min-w-[36px]">
@@ -434,7 +601,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
           className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 active:bg-slate-700 transition-all touch-manipulation min-w-[36px]">
           <RotateCcw size={15}/>
         </button>
-
         <form onSubmit={navigate} className="flex-1 flex items-center gap-2 bg-slate-900/60 border border-slate-700/40 rounded-xl px-3 py-1.5">
           <Globe size={13} className="text-slate-500 flex-shrink-0"/>
           <input
@@ -444,16 +610,13 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
             className="bg-transparent outline-none text-xs text-slate-300 w-full placeholder-slate-600"
           />
         </form>
-
         <button
           onClick={() => setShowKeyboard(v => !v)}
-          className={`p-2 rounded-lg transition-all touch-manipulation min-w-[36px] ${showKeyboard ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
-        >
+          className={`p-2 rounded-lg transition-all touch-manipulation min-w-[36px] ${showKeyboard ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}>
           <Keyboard size={16}/>
         </button>
       </div>
 
-      {/* Touch keyboard panel */}
       <AnimatePresence>
         {showKeyboard && (
           <motion.div
@@ -462,8 +625,7 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
           >
             <div className="p-3 flex gap-2">
               <input
-                autoFocus
-                value={keyboardText}
+                autoFocus value={keyboardText}
                 onChange={e => setKeyboardText(e.target.value)}
                 onKeyDown={e => { if(e.key === 'Enter') sendKeyboardText(); }}
                 placeholder="اكتب نصاً لإرساله للمتصفح..."
@@ -478,7 +640,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
         )}
       </AnimatePresence>
 
-      {/* Live browser stream */}
       <div
         className="flex-1 relative bg-black select-none overflow-hidden cursor-crosshair"
         style={{ touchAction: 'none' }}
@@ -509,8 +670,6 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
             )}
           </div>
         )}
-
-        {/* img always in DOM — src driven by state */}
         <img
           ref={browserImgRef}
           alt="Browser View"
@@ -519,15 +678,11 @@ const BrowserPanel = memo(({ frameSrc, browserHasFrame, isAgentBusy, onEmit }: B
           src={frameSrc ? `data:image/jpeg;base64,${frameSrc}` : undefined}
           style={{ display: browserHasFrame ? 'block' : 'none' }}
         />
-
-        {/* Agent busy overlay */}
         {isAgentBusy && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-black/70 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-2 text-xs text-indigo-300 font-medium pointer-events-none z-20">
             <Loader2 size={12} className="animate-spin"/> الوكيل يتحكم في المتصفح
           </div>
         )}
-
-        {/* Hint */}
         {browserHasFrame && (
           <div className="absolute bottom-3 right-3 px-3 py-1 bg-black/50 backdrop-blur-sm border border-white/10 rounded-full text-[10px] text-slate-500 flex items-center gap-1.5 pointer-events-none z-10">
             <Terminal size={10}/> نقر • سحب • ضغط طويل
@@ -551,10 +706,11 @@ const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen]     = useState(false);
   const [isAgentBusy, setIsAgentBusy]     = useState(false);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequest | null>(null);
+  const [currentPlan, setCurrentPlan]     = useState<TaskPlan | null>(null);
+  const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
 
-  // Stable emit callback — never changes reference
   const emitBrowser = useCallback((type: string, params: any) => {
     socketRef.current?.emit('browserEvent', { type, pageId: 'default', params });
   }, []);
@@ -563,7 +719,6 @@ const App: React.FC = () => {
     socketRef.current?.emit('resumeTask', taskId);
   }, []);
 
-  // ── Message helpers ─────────────────────────────────────────────────────
   const addSystem  = useCallback((text: string, level: Message['level'] = 'info') =>
     setMessages(p => [...p, { id: uid(), type: 'system', text, timestamp: new Date(), level }]), []);
 
@@ -582,33 +737,32 @@ const App: React.FC = () => {
       return [...p, { id: uid(), type: 'thinking', text, timestamp: new Date(), step }];
     }), []);
 
-  // ── Auto-classify task type from description ────────────────────────────
   const autoClassifyType = useCallback((text: string): string => {
     const t = text.toLowerCase();
     const browserKw = ['افتح','تصفح','انتقل','موقع','اذهب','سجل','تسجيل','facebook','twitter','instagram','youtube','google','يوتيوب','ويب','web','url','http','احجز','اشتر'];
     const codeKw    = ['اكتب كود','برمجة','كود','script','python','javascript','برنامج','function','api','class','debug','typescript','sql','ابرمج'];
     const researchKw= ['ابحث','اشرح','ما هو','ما هي','كيف','لماذا','معلومات','تحليل','قارن','تقرير','ملخص','explain','research','analyze'];
-
     if (browserKw.some(k => t.includes(k))) return 'browser';
     if (codeKw.some(k => t.includes(k)))    return 'system';
     if (researchKw.some(k => t.includes(k))) return 'research';
     return 'ai';
   }, []);
 
-  // ── Submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(() => {
     const text = inputValue.trim();
     if (!text || !socketRef.current || !isConnected) return;
     setMessages(p => [...p, { id: uid(), type: 'user', text, timestamp: new Date() }]);
+    setCurrentPlan(null);
+    setAgentActivity(null);
     const taskType = autoClassifyType(text);
     socketRef.current.emit('submitTask', { description: text, type: taskType, priority: 'normal' });
     setInputValue('');
   }, [inputValue, isConnected, autoClassifyType]);
 
-  // ── Stop ────────────────────────────────────────────────────────────────
   const handleStop = useCallback(() => {
     socketRef.current?.emit('stopTask');
     setIsAgentBusy(false);
+    setAgentActivity(null);
     addSystem('تم إيقاف المهمة', 'info');
   }, [addSystem]);
 
@@ -624,24 +778,54 @@ const App: React.FC = () => {
     socket.on('taskUpdate', (d: any) => {
       socket.emit('getStatus');
       if (d.type === 'status_change') {
-        if      (d.status === 'completed')     { addAgent('اكتملت المهمة بنجاح', 'completed'); setIsAgentBusy(false); }
-        else if (d.status === 'failed')        { addAgent(`فشلت المهمة: ${d.error}`, 'failed'); setIsAgentBusy(false); }
+        if      (d.status === 'completed')     { addAgent('اكتملت المهمة بنجاح', 'completed'); setIsAgentBusy(false); setAgentActivity(null); }
+        else if (d.status === 'failed')        { addAgent(`فشلت المهمة: ${d.error}`, 'failed'); setIsAgentBusy(false); setAgentActivity(null); }
         else if (d.status === 'awaiting_user') { addAgent('الوكيل ينتظر تدخلك', 'awaiting_user'); }
       }
     });
 
     socket.on('taskStart', (d: any) => {
-      addSystem(`بدأت المهمة: ${d.description}`, 'info');
+      addSystem(`بدأت المهمة`, 'info');
       setIsAgentBusy(true);
-      setActiveTab('browser');
     });
-    socket.on('taskSuccess', () => setIsAgentBusy(false));
-    socket.on('taskFail',    () => setIsAgentBusy(false));
+
+    socket.on('taskSuccess', (d: any) => {
+      setIsAgentBusy(false);
+      setAgentActivity(null);
+      if (d?.result) addAgent(d.result, 'completed');
+    });
+
+    socket.on('taskFail', () => {
+      setIsAgentBusy(false);
+      setAgentActivity(null);
+    });
 
     socket.on('thinking', (d: { content: string }) => {
       const match = d.content.match(/^\[(\w+)\]/);
       if (match) setCurrentStep(match[1]);
       addThinking(d.content, match?.[1]);
+    });
+
+    // ── أحداث جديدة: خطة ووكلاء متعددين ─────────────────────────────────
+    socket.on('taskPlan', (d: { taskId: string; plan: TaskPlan }) => {
+      setCurrentPlan(d.plan);
+      setActiveTab('plan');
+    });
+
+    socket.on('agentActivity', (d: AgentActivity) => {
+      setAgentActivity(d);
+      // تحديث حالة خطوة الخطة
+      setCurrentPlan(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          steps: prev.steps.map(s =>
+            s.id === d.stepId
+              ? { ...s, status: d.status === 'done' ? 'completed' : d.status === 'failed' ? 'failed' : 'running' }
+              : s
+          ),
+        };
+      });
     });
 
     socket.on('browserStream', (d: { image: string }) => {
@@ -655,7 +839,6 @@ const App: React.FC = () => {
       if (log.level === 'error') addSystem(log.message, 'error');
     });
 
-    // ── الوكيل يطلب بيانات من المستخدم ──────────────────────────────────────
     socket.on('agentNeedsInput', (d: InputRequest) => {
       setPendingInputRequest(d);
       setActiveTab('chat');
@@ -664,7 +847,6 @@ const App: React.FC = () => {
     return () => { socket.disconnect(); };
   }, [addSystem, addAgent, addThinking]);
 
-  // ── User answers agent's request for input ──────────────────────────────
   const handleUserAnswer = useCallback((answer: string) => {
     if (!pendingInputRequest || !socketRef.current) return;
     socketRef.current.emit('userInput', { taskId: pendingInputRequest.taskId, answer });
@@ -691,12 +873,28 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h1 className="font-bold text-white text-base leading-none">CortexFlow</h1>
-                  <p className="text-[11px] text-slate-500 mt-0.5">وكيل تصفح ذكي</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">وكيل AI متعدد الأدوار</p>
                 </div>
               </div>
-              <button onClick={() => setSidebarOpen(false)} className="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all touch-manipulation">
+              <button onClick={() => setSidebarOpen(false)}
+                className="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all touch-manipulation">
                 <X size={18}/>
               </button>
+            </div>
+
+            {/* Agents status */}
+            <div className="p-4 border-b border-slate-800/50">
+              <p className="text-[11px] uppercase tracking-widest font-bold text-slate-600 px-2 mb-3 flex items-center gap-2">
+                <Network size={12}/> الوكلاء المتاحون
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(AGENT_META).map(([role, meta]) => (
+                  <div key={role} className={`p-2 rounded-lg border ${meta.bg} flex items-center gap-1.5`}>
+                    <meta.icon size={11} className={meta.color}/>
+                    <span className="text-[10px] text-slate-400 truncate">{meta.label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
@@ -719,7 +917,7 @@ const App: React.FC = () => {
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-red-500'}`}/>
                 <span className="text-xs text-slate-500">{isConnected ? 'متصل' : 'غير متصل'}</span>
               </div>
-              <button onClick={() => setMessages([])}
+              <button onClick={() => { setMessages([]); setCurrentPlan(null); setAgentActivity(null); }}
                 className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 border border-slate-700/40 touch-manipulation">
                 <RefreshCw size={14}/> مسح المحادثة
               </button>
@@ -729,6 +927,12 @@ const App: React.FC = () => {
       )}
     </AnimatePresence>
   );
+
+  const TABS = [
+    { id: 'chat'    as ActiveTab, label: 'المحادثة', icon: Bot     },
+    { id: 'plan'    as ActiveTab, label: 'الخطة',    icon: ListChecks, badge: !!currentPlan },
+    { id: 'browser' as ActiveTab, label: 'المتصفح',  icon: Monitor, badge: isAgentBusy && browserHasFrame },
+  ];
 
   return (
     <div className="flex h-screen bg-[#0b0b12] text-slate-200 font-sans overflow-hidden select-none">
@@ -746,9 +950,19 @@ const App: React.FC = () => {
               <Bot size={15} className="text-white"/>
             </div>
             <span className="font-bold text-white text-sm">CortexFlow</span>
-            {isAgentBusy && currentStep && STEP_META[currentStep] && (
-              <span className="flex items-center gap-1 px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[11px] text-indigo-400 font-medium">
-                <Loader2 size={10} className="animate-spin"/>
+            {isAgentBusy && agentActivity && (
+              <motion.span
+                key={agentActivity.agentRole}
+                initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border ${AGENT_META[agentActivity.agentRole]?.bg || 'bg-slate-800 border-slate-700'} ${AGENT_META[agentActivity.agentRole]?.color || 'text-slate-400'}`}
+              >
+                <Loader2 size={9} className="animate-spin"/>
+                {AGENT_META[agentActivity.agentRole]?.label || 'يعمل'}
+              </motion.span>
+            )}
+            {isAgentBusy && !agentActivity && currentStep && STEP_META[currentStep] && (
+              <span className={`flex items-center gap-1 px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[11px] font-medium ${STEP_META[currentStep].color}`}>
+                <Loader2 size={9} className="animate-spin"/>
                 {STEP_META[currentStep].label}
               </span>
             )}
@@ -756,11 +970,11 @@ const App: React.FC = () => {
           <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`}/>
         </header>
 
-        {/* Content */}
+        {/* Desktop layout: 3 columns */}
         <div className="flex-1 flex min-h-0">
-          {/* Desktop: split */}
           <div className="hidden lg:flex flex-1 min-h-0">
-            <div className="w-[42%] border-r border-slate-800/50 flex flex-col min-h-0">
+            {/* Chat column */}
+            <div className="w-[36%] border-r border-slate-800/50 flex flex-col min-h-0">
               <ChatPanel
                 messages={messages} tasks={tasks} isConnected={isConnected}
                 isAgentBusy={isAgentBusy} currentStep={currentStep}
@@ -769,6 +983,22 @@ const App: React.FC = () => {
                 pendingInputRequest={pendingInputRequest} onUserAnswer={handleUserAnswer}
               />
             </div>
+            {/* Plan column */}
+            <div className="w-[28%] border-r border-slate-800/50 flex flex-col min-h-0 overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-800/50 flex items-center gap-2 flex-shrink-0">
+                <ListChecks size={14} className="text-violet-400"/>
+                <span className="text-xs font-semibold text-slate-300">خطة التنفيذ</span>
+                {currentPlan && (
+                  <span className="ml-auto text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full border border-violet-500/20">
+                    {currentPlan.steps.length} خطوات
+                  </span>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <PlanPanel plan={currentPlan} agentActivity={agentActivity} isAgentBusy={isAgentBusy}/>
+              </div>
+            </div>
+            {/* Browser column */}
             <div className="flex-1 flex flex-col min-h-0">
               <BrowserPanel
                 frameSrc={browserFrameSrc} browserHasFrame={browserHasFrame}
@@ -788,6 +1018,10 @@ const App: React.FC = () => {
                     onSubmit={handleSubmit} onStop={handleStop} onResume={handleResume}
                     pendingInputRequest={pendingInputRequest} onUserAnswer={handleUserAnswer}
                   />
+                : activeTab === 'plan'
+                ? <div className="h-full overflow-y-auto">
+                    <PlanPanel plan={currentPlan} agentActivity={agentActivity} isAgentBusy={isAgentBusy}/>
+                  </div>
                 : <BrowserPanel
                     frameSrc={browserFrameSrc} browserHasFrame={browserHasFrame}
                     isAgentBusy={isAgentBusy} onEmit={emitBrowser}
@@ -795,15 +1029,15 @@ const App: React.FC = () => {
               }
             </div>
             <div className="flex border-t border-slate-800/50 bg-[#0d0d15] flex-shrink-0">
-              {([['chat','المحادثة',Bot],['browser','المتصفح',Monitor]] as const).map(([id, label, Icon]) => (
-                <button key={id} onClick={() => setActiveTab(id as ActiveTab)}
+              {TABS.map(({ id, label, icon: Icon, badge }) => (
+                <button key={id} onClick={() => setActiveTab(id)}
                   className={`flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-all touch-manipulation relative ${
                     activeTab === id ? 'text-indigo-400 border-t-2 border-indigo-500' : 'text-slate-500 border-t-2 border-transparent'
                   }`}>
                   <Icon size={20}/>
                   <span className="text-[11px] font-medium">{label}</span>
-                  {id==='browser' && isAgentBusy && (
-                    <div className="absolute top-2 right-1/3 w-2 h-2 rounded-full bg-indigo-500 animate-pulse"/>
+                  {badge && (
+                    <div className="absolute top-2 right-1/3 w-2 h-2 rounded-full bg-violet-500 animate-pulse"/>
                   )}
                 </button>
               ))}

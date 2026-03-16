@@ -49,7 +49,9 @@ io.on("connection", (socket) => {
       socket.emit("taskCreated", task);
       io.emit("taskUpdate", task);
 
-      const onThinking  = (d: any) => { if (d.taskId === task.taskId) socket.emit("thinking", d); };
+      const onThinking     = (d: any) => { if (d.taskId === task.taskId) socket.emit("thinking", d); };
+      const onAgentActivity = (d: any) => { if (d.taskId === task.taskId) socket.emit("agentActivity", d); };
+      const onTaskPlan      = (d: any) => { if (d.taskId === task.taskId) socket.emit("taskPlan", d); };
       const onStart     = (d: any) => {
         if (d.taskId === task.taskId) {
           socket.emit("taskStart", d);
@@ -80,19 +82,23 @@ io.on("connection", (socket) => {
         }
       };
       const cleanup = () => {
-        agentRunner.off("thinking",  onThinking);
-        agentRunner.off("taskStart", onStart);
-        agentRunner.off("taskSuccess", onSuccess);
-        agentRunner.off("taskFail",  onFail);
-        agentRunner.off("needInput", onNeedInput);
+        agentRunner.off("thinking",      onThinking);
+        agentRunner.off("agentActivity", onAgentActivity);
+        agentRunner.off("taskPlan",      onTaskPlan);
+        agentRunner.off("taskStart",     onStart);
+        agentRunner.off("taskSuccess",   onSuccess);
+        agentRunner.off("taskFail",      onFail);
+        agentRunner.off("needInput",     onNeedInput);
         socket.off("userInput", onUserInput);
       };
 
-      agentRunner.on("thinking",  onThinking);
-      agentRunner.on("taskStart", onStart);
-      agentRunner.on("taskSuccess", onSuccess);
-      agentRunner.on("taskFail",  onFail);
-      agentRunner.on("needInput", onNeedInput);
+      agentRunner.on("thinking",      onThinking);
+      agentRunner.on("agentActivity", onAgentActivity);
+      agentRunner.on("taskPlan",      onTaskPlan);
+      agentRunner.on("taskStart",     onStart);
+      agentRunner.on("taskSuccess",   onSuccess);
+      agentRunner.on("taskFail",      onFail);
+      agentRunner.on("needInput",     onNeedInput);
       socket.on("userInput", onUserInput);
 
       agentRunner.executeTask(task).catch((err: any) => {

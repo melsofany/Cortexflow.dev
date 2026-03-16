@@ -4,6 +4,9 @@ import { ollamaClient, ChatMessage } from "./ollamaClient.js";
 import { taskStore, Task } from "./taskStore.js";
 import { browserAgent } from "./browserAgent.js";
 import { selectBestModel, formatModelSelection, modelSelector, classifyTask } from "./modelSelector.js";
+import { plannerAgent, TaskPlan } from "./planner.js";
+import { memorySystem } from "./memory.js";
+import { multiAgentOrchestrator } from "./multiAgent.js";
 
 const MAX_ITERATIONS = 20;
 const MAX_RETRIES    = 2;
@@ -182,6 +185,16 @@ class AgentRunner extends EventEmitter {
     taskStore.updateTask(task.taskId, { status: "running" });
     this.emit("taskStart", { taskId: task.taskId, description: task.description });
 
+    memorySystem.initSession(task.taskId, task.description);
+
+    // Propagate multi-agent activity events
+    const onAgentActivity = (d: any) => {
+      if (d.taskId === task.taskId) {
+        this.emit("agentActivity", d);
+      }
+    };
+    multiAgentOrchestrator.on("agentActivity", onAgentActivity);
+
     try {
       const { model, category, reason } = await selectBestModel(task.description, task.type);
       this.emitStep(task.taskId, "MODEL", formatModelSelection(model, category, reason));
@@ -191,8 +204,8 @@ class AgentRunner extends EventEmitter {
         await this.executeBrowserTask(task, start, model);
       } else if (this.shouldUsePythonAgent(category)) {
         await this.executePythonAgent(task, start, model, category);
-      } else if (ollamaClient.isAvailable()) {
-        await this.runWithOllama(task, start, model, category);
+      } else if (ollamaClient.isAvailable() || getDeepSeekKey()) {
+        await this.runWithPlannerAndAgents(task, start, model, category);
       } else {
         await this.simulateWithSteps(task, start);
       }
@@ -200,7 +213,65 @@ class AgentRunner extends EventEmitter {
       const msg = err.message || "Unknown error";
       taskStore.updateTask(task.taskId, { status: "failed", error: msg });
       this.emit("taskFail", { taskId: task.taskId, error: msg });
+    } finally {
+      multiAgentOrchestrator.off("agentActivity", onAgentActivity);
+      memorySystem.clearSession(task.taskId);
     }
+  }
+
+  // ── تنفيذ مع نظام التخطيط والوكلاء المتعددين ────────────────────────────
+  private async runWithPlannerAndAgents(
+    task: Task,
+    start: number,
+    model: string,
+    category: string,
+  ): Promise<void> {
+    const taskId = task.taskId;
+
+    // 1) إنشاء الخطة
+    this.emitStep(taskId, "PLANNING", "وكيل التخطيط يحلل المهمة...");
+    const plan = await plannerAgent.createPlan(task.description, (msgs, opts) =>
+      smartChat(msgs, opts || {}, "PLANNING"),
+    );
+
+    this.emit("taskPlan", { taskId, plan });
+    this.emitStep(taskId, "PLAN", `خطة التنفيذ (${plan.steps.length} خطوات):\n${plan.steps.map((s) => `${s.id}. [${s.agent}] ${s.title}`).join("\n")}`);
+    await sleep(300);
+
+    // 2) تنفيذ كل خطوة بالوكيل المناسب
+    const stepResults: Record<number, string> = {};
+
+    for (const step of plan.steps) {
+      this.emitStep(taskId, "ACT", `تنفيذ الخطوة ${step.id}/${plan.steps.length}: ${step.title}`);
+
+      const result = await multiAgentOrchestrator.executeStep(
+        taskId,
+        step,
+        task.description,
+        stepResults,
+        (msgs, opts, stepName) => smartChat(msgs, { ...opts, model }, stepName || ""),
+      );
+
+      stepResults[step.id] = result;
+      this.emitStep(taskId, "VERIFY", `✓ الخطوة ${step.id}: ${step.title}\n${result.substring(0, 200)}`);
+      await sleep(200);
+    }
+
+    // 3) مراجعة نهائية
+    this.emitStep(taskId, "OBSERVE", "وكيل المراجعة يراجع النتائج النهائية...");
+    const finalReview = await multiAgentOrchestrator.runReviewPhase(
+      taskId,
+      task.description,
+      stepResults,
+      (msgs, opts) => smartChat(msgs, { ...opts, model }),
+    );
+
+    const duration = Date.now() - start;
+    modelSelector.recordResult(model, category, true, duration / 1000, 0.8);
+
+    taskStore.updateTask(taskId, { status: "completed", result: finalReview });
+    taskStore.addLog({ taskId, agentType: "MultiAgent", action: "task_complete", output: finalReview.substring(0, 300), durationMs: duration });
+    this.emit("taskSuccess", { taskId, result: finalReview });
   }
 
   private shouldUsePythonAgent(category: string): boolean {

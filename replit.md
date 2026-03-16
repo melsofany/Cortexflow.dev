@@ -2,7 +2,7 @@
 
 ## Overview
 
-CortexFlow is a professional AI agent system that automatically selects the best local model (via Ollama) based on task type, executes tasks using advanced agent loops (OODA, LangGraph, AutoGPT, Code Interpreter, Mistral), downloads model weights automatically, and self-improves over time.
+CortexFlow is a professional multi-agent AI platform. It uses a Planner Agent to decompose user goals into structured task plans, then routes each step to the appropriate specialized agent (Browser, Coder, Researcher, Reviewer, General). It includes a short-term + long-term memory system, real-time plan visualization, and hybrid AI routing (Ollama local → DeepSeek cloud).
 
 ## Stack
 
@@ -23,10 +23,21 @@ User (Frontend App.tsx)
   ↓  socket.io /api/socket
 API Server (Express, port 8080)
   ↓  agentRunner.ts → classifies task
-  ├── Browser Agent (Playwright/Chromium) → for browser tasks
-  └── Python Agent Service (port 8090)   → for AI/code/research tasks
+  ├── Browser tasks → Playwright/Chromium browser agent
+  ├── Complex tasks → Python Agent Service (port 8090)
+  └── General/Code/Research tasks → Multi-Agent System:
         ↓
-      OODA / LangGraph / AutoGPT / CodeInterpreter / Mistral
+      PlannerAgent → TaskPlan (steps + agents)
+        ↓
+      MultiAgentOrchestrator → executes each step:
+        ├── PlannerAgent (goal decomposition)
+        ├── BrowserAgent (web navigation)
+        ├── CoderAgent (programming tasks)
+        ├── ResearcherAgent (information gathering)
+        ├── ReviewerAgent (quality review)
+        └── GeneralAgent (miscellaneous)
+        ↓
+      MemorySystem → short-term (session) + long-term (persistent)
         ↓
       Ollama (port 11434) → llama3.2:1b / qwen2:0.5b / llama3.2:3b
 ```
