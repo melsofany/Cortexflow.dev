@@ -88,80 +88,50 @@ ACTION: <الإجراء> | PARAM: <القيمة>
   navigate  - الانتقال إلى رابط URL: PARAM: https://...
   click     - النقر على عنصر بالنص المرئي: PARAM: نص_الزر
   fill      - ملء حقل نصي: PARAM: اسم_الحقل=القيمة
-  select    - اختيار من أي قائمة منسدلة (native <select> أو مخصصة مثل React Select/MUI): PARAM: اسم_القائمة=الخيار
-  ask       - اطلب من المستخدم إدخال بيانات حساسة: PARAM: وصف ما تحتاجه
-  type      - كتابة نص في العنصر المحدد: PARAM: النص
+  select    - اختيار من قائمة منسدلة: PARAM: اسم_القائمة=الخيار
+  ask       - اطلب من المستخدم إدخال بيانات: PARAM: وصف ما تحتاجه
   key       - ضغط مفتاح: PARAM: Enter أو Tab أو Escape
   scroll    - التمرير: PARAM: up أو down
-  wait      - انتظار: PARAM: waiting
-  done      - المهمة مكتملة (استخدمه فقط بعد التحقق الفعلي من نجاح العملية): PARAM: وصف الإنجاز
+  wait      - انتظار تحميل الصفحة: PARAM: waiting
+  done      - المهمة مكتملة (بعد التحقق الفعلي): PARAM: وصف الإنجاز
 
-قاعدة ask (مهمة جداً):
-- استخدم ask دائماً للبيانات الحساسة قبل استخدام fill:
-  * البريد الإلكتروني الحقيقي
-  * كلمة المرور
-  * رقم الهاتف
-  * الاسم الحقيقي (إذا لم يُذكر في المهمة)
-- مثال: ACTION: ask | PARAM: أدخل بريدك الإلكتروني لإنشاء الحساب
-- بعد استلام الرد، استخدم البيانات في fill أو select
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+المبدأ الأساسي: اقرأ الصفحة — لا تتخمن
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+في كل خطوة تحصل على "هيكل الصفحة الحالية". هذا الهيكل يُظهر:
+  - [حقل] اسم الحقل من الصفحة مباشرةً → استخدمه في fill
+  - [قائمة#N] رقم القائمة وخياراتها → استخدم nth:N في select
+  - [زر] نص الزر الظاهر → استخدمه في click
 
-قاعدة كشف الأخطاء:
-- إذا وردت "أخطاء ظاهرة في الصفحة" — حلّل الخطأ أولاً
-- إذا كان الخطأ بسبب بيانات خاطئة → اطلب التصحيح من المستخدم بـ ask
-- إذا كان الخطأ تقنياً → جرّب إجراءً مختلفاً
+القاعدة الذهبية:
+  1. انظر إلى هيكل الصفحة المُعطى لك
+  2. حدّد اسم الحقل/القائمة/الزر من الهيكل
+  3. استخدم ذلك الاسم تماماً بدون تخمين أو اختراع
 
-قاعدة fill:
-- استخدم اسم الحقل من name= أو id= الظاهر في هيكل الصفحة
-- مثال: "fill PARAM: firstname=أحمد" ← "fill PARAM: email=user@example.com"
+━━━ قاعدة fill ━━━
+- استخدم القيمة في name= أو id= من هيكل الصفحة
+- مثال: إذا ظهر [حقل] fill PARAM: email=... → استخدم: fill PARAM: email=القيمة
 
-قاعدة select (للقوائم المنسدلة — native ومخصصة):
-- يعمل مع جميع أنواع القوائم: <select> الأصلية، React Select، Material UI، وغيرها
-- هيكل الصفحة يُظهر القوائم هكذا: [قائمة#0] [قائمة#1] [قائمة#2]
-  الرقم بعد # هو ترتيب القائمة في الصفحة (ابدأ من 0)
-- استخدم دائماً صيغة nth عندما يكون الترتيب ظاهراً في الهيكل:
-  select PARAM: nth:0=<الخيار>  ← القائمة الأولى (اليوم عادةً)
-  select PARAM: nth:1=<الخيار>  ← القائمة الثانية (الشهر عادةً)
-  select PARAM: nth:2=<الخيار>  ← القائمة الثالثة (السنة عادةً)
-- أو استخدم اسم الحقل إذا ظهر في الهيكل: select PARAM: day=15
-- فيسبوك تحديداً: تاريخ الميلاد له ثلاث قوائم بالترتيب:
-  select PARAM: nth:0=15  (اليوم)
-  select PARAM: nth:1=2   (الشهر — February)
-  select PARAM: nth:2=1990 (السنة)
-  select PARAM: sex=ذكر   (الجنس — راديو)
-- اقرأ هيكل الصفحة جيداً وحدد الترتيب الصحيح قبل الاختيار
+━━━ قاعدة select ━━━
+- القوائم تُظهر رقمها: [قائمة#0]، [قائمة#1]، [قائمة#2]...
+- استخدم الصيغة: select PARAM: nth:0=الخيار   (رقم القائمة من الهيكل)
+- أو استخدم الاسم مباشرة إذا ظهر: select PARAM: day=15
+- الخيارات المتاحة مذكورة في الهيكل — اختر أقرب قيمة مطابقة
 
-قاعدة done (مهمة جداً — لا تتجاهلها):
-- لا تستخدم "done" إلا بعد التحقق الفعلي من نجاح العملية:
-  * تأكد من أن URL الصفحة تغيّر إلى صفحة تأكيد أو نجاح
-  * أو تأكد من ظهور رسالة نجاح واضحة في الصفحة
-  * أو تأكد من اختفاء النموذج وظهور محتوى جديد
-- إذا بقيت على نفس الصفحة بعد الضغط → إما توجد أخطاء يجب تصحيحها، أو المهمة لم تكتمل
-- بعد النقر على زر الإرسال أو التأكيد: استخدم "wait" أولاً، ثم قيّم الصفحة قبل "done"
+━━━ قاعدة ask ━━━
+- استخدم ask قبل fill للبيانات الحساسة: كلمة المرور، البريد، الهاتف
+- مثال: ask PARAM: أدخل كلمة المرور
 
-أمثلة كاملة لتسجيل في فيسبوك:
-ACTION: navigate | PARAM: https://www.facebook.com/reg
-ACTION: fill | PARAM: firstname=أحمد
-ACTION: fill | PARAM: lastname=محمد
-ACTION: ask | PARAM: أدخل بريدك الإلكتروني أو رقم هاتفك
-ACTION: fill | PARAM: reg_email__=ahmed@example.com
-ACTION: ask | PARAM: أدخل كلمة المرور
-ACTION: fill | PARAM: reg_passwd__=MyPassword123
-[اقرأ هيكل الصفحة لمعرفة ترتيب القوائم — عادةً: #0=اليوم، #1=الشهر، #2=السنة]
-ACTION: select | PARAM: nth:0=15
-ACTION: select | PARAM: nth:1=2
-ACTION: select | PARAM: nth:2=1990
-ACTION: select | PARAM: sex=ذكر
-ACTION: click | PARAM: إنشاء حساب جديد
-ACTION: wait | PARAM: waiting
-[الآن تحقق من URL والصفحة — إذا تغيّرت → done، إذا بقيت أخطاء → صحّح]
-ACTION: done | PARAM: تم إنشاء الحساب بنجاح (فقط إذا تغيّرت الصفحة فعلاً)
-
-تنبيه مهم: اقرأ هيكل الصفحة أولاً. القوائم المنسدلة تُظهر [قائمة#0] [قائمة#1] [قائمة#2] — استخدم رقم الترتيب مع nth. لا تتخمن الأسماء.
+━━━ قاعدة done ━━━
+- لا تستخدم done إلا بعد:
+  * تغيّر URL إلى صفحة نجاح/تأكيد
+  * أو ظهور رسالة نجاح صريحة في الصفحة
+- إذا بقيت على نفس الصفحة → يوجد خطأ لم يُصحَّح بعد
 
 القواعد الصارمة:
-- أخرج سطر ACTION واحد فقط، لا شيء آخر أبداً
+- سطر واحد فقط، لا شرح ولا تعليق
 - للقوائم [قائمة] استخدم select وليس fill أو click
-- استخدم "done" فقط بعد التحقق الفعلي من نجاح المهمة (تغيّر URL أو ظهور رسالة نجاح)`;
+- كل أسماء الحقول والأزرار مصدرها هيكل الصفحة فقط`;
 
 const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً.`;
 
@@ -437,26 +407,57 @@ class AgentRunner extends EventEmitter {
         this.emitStep(taskId, "ACT", `خطوة 0: الانتقال إلى ${targetUrl}`);
         await browserAgent.navigate(targetUrl).catch(() => {});
         await browserAgent.captureNow();
-        await sleep(800);
+        await sleep(1200);
       }
 
-      const history: ChatMessage[] = [{ role: "system", content: ACTION_SYSTEM_PROMPT }];
+      // ── مرحلة التحليل الأولية: اقرأ الصفحة كاملاً قبل البدء ────────────
+      const initStruct  = await browserAgent.getPageStructure();
+      const initContent = await browserAgent.getPageContent();
+      const initUrl     = await browserAgent.getCurrentUrl();
+      this.emitStep(taskId, "THINK", `تحليل الصفحة:\n${initStruct}`);
+
+      const history: ChatMessage[] = [
+        { role: "system", content: ACTION_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            `المهمة: ${task.description}`,
+            ``,
+            `═══ تحليل الصفحة الأولية ═══`,
+            `الرابط: ${initUrl}`,
+            ``,
+            `هيكل الصفحة الكامل:`,
+            initStruct,
+            ``,
+            `النص المرئي:`,
+            initContent.substring(0, 600),
+            ``,
+            `═══════════════════════════`,
+            `لقد رأيت الصفحة كاملاً. الآن ابدأ بأول خطوة منطقية بناءً على ما قرأته.`,
+            `أخرج سطر ACTION واحد فقط.`,
+          ].join("\n"),
+        },
+      ];
       let consecutiveFails = 0;
 
       for (let i = 1; i <= MAX_ITERATIONS; i++) {
-        const url     = await browserAgent.getCurrentUrl();
-        const struct  = await browserAgent.getPageStructure();
-        const content = await browserAgent.getPageContent();
+        // في الخطوة الأولى استخدم التحليل الأولي، وبعدها اقرأ الصفحة من جديد
+        const url     = i === 1 ? initUrl     : await browserAgent.getCurrentUrl();
+        const struct  = i === 1 ? initStruct  : await browserAgent.getPageStructure();
+        const content = i === 1 ? initContent : await browserAgent.getPageContent();
 
-        const pageState = [
-          `المهمة: ${task.description}`,
-          `الرابط الحالي: ${url}`,
-          `هيكل الصفحة: ${struct.substring(0, 600)}`,
-          `النص المرئي: ${content.substring(0, 400)}`,
-          `الخطوة ${i} من ${MAX_ITERATIONS}: أخرج سطر ACTION واحد فقط.`,
-        ].join("\n");
-
-        history.push({ role: "user", content: pageState });
+        // في الخطوة الأولى الرسالة مُحضَّرة مسبقاً، من الثانية فصاعداً أضف تحديثات الصفحة
+        if (i > 1) {
+          const pageState = [
+            `─── تحديث الصفحة (الخطوة ${i}) ───`,
+            `الرابط الحالي: ${url}`,
+            `هيكل الصفحة:`,
+            struct,
+            `النص المرئي: ${content.substring(0, 400)}`,
+            `الخطوة ${i} من ${MAX_ITERATIONS}: أخرج سطر ACTION واحد فقط.`,
+          ].join("\n");
+          history.push({ role: "user", content: pageState });
+        }
 
         let raw = "";
         for (let retry = 0; retry < MAX_RETRIES; retry++) {
