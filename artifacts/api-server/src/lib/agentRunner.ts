@@ -464,6 +464,52 @@ class AgentRunner extends EventEmitter {
     }
   }
 
+  // ── التحليل العميق للمهمة قبل التنفيذ (مثل DeepSeek في الشات) ─────────
+  private async deepAnalyzeTask(taskDescription: string, targetUrl: string | null): Promise<{ analysis: string; steps: string[]; needsFromUser: string[] }> {
+    const DEEP_ANALYSIS_PROMPT = `أنت CortexFlow، وكيل ذكاء اصطناعي متقدم. مهمتك تحليل المهمة التالية بعمق كامل قبل التنفيذ.
+
+قم بما يلي:
+1. **فهم المهمة**: ما الهدف النهائي الدقيق؟
+2. **تحديد الموقع**: ما الرابط الصحيح للبدء؟
+3. **تحليل المتطلبات**: ما الذي يحتاجه المستخدم لإكمال هذه المهمة (حسابات، بيانات اعتماد، معلومات)؟
+4. **خطة التنفيذ**: اذكر الخطوات بدقة وتسلسل منطقي
+5. **ما يجب طلبه من المستخدم**: إذا كانت المهمة تحتاج بيانات حساسة (كلمة مرور، رقم هاتف، الخ)
+
+تنسيق الإجابة (JSON فقط):
+{
+  "understanding": "شرح فهمك الكامل للمهمة",
+  "targetUrl": "الرابط الصحيح للبدء",
+  "steps": ["الخطوة 1", "الخطوة 2", ...],
+  "needsFromUser": ["ما يجب طلبه من المستخدم قبل البدء"],
+  "warnings": ["تحذيرات مهمة"]
+}`;
+
+    try {
+      const resp = await deepseekChat([
+        { role: "system", content: DEEP_ANALYSIS_PROMPT },
+        { role: "user", content: `المهمة: "${taskDescription}"\nالرابط المقترح: ${targetUrl || "غير محدد، حدده أنت"}` },
+      ], 1800, 0.3);
+
+      const jsonMatch = resp.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          analysis: [
+            `## 🧠 فهم المهمة\n${parsed.understanding || ""}`,
+            parsed.targetUrl ? `\n## 🌐 الرابط الهدف\n${parsed.targetUrl}` : "",
+            `\n## 📋 خطوات التنفيذ\n${(parsed.steps || []).map((s: string, i: number) => `${i+1}. ${s}`).join("\n")}`,
+            parsed.needsFromUser?.length ? `\n## ❓ مطلوب من المستخدم\n${(parsed.needsFromUser as string[]).map((s: string) => `- ${s}`).join("\n")}` : "",
+            parsed.warnings?.length ? `\n## ⚠️ تحذيرات\n${(parsed.warnings as string[]).map((s: string) => `- ${s}`).join("\n")}` : "",
+          ].filter(Boolean).join(""),
+          steps: parsed.steps || [],
+          needsFromUser: parsed.needsFromUser || [],
+        };
+      }
+    } catch {}
+
+    return { analysis: `تحليل المهمة: "${taskDescription}"`, steps: [], needsFromUser: [] };
+  }
+
   // ── تنفيذ مهام المتصفح ─────────────────────────────────────────────────
 
   private async executeBrowserTask(task: Task, start: number, model: string): Promise<void> {
@@ -476,7 +522,7 @@ class AgentRunner extends EventEmitter {
       estimatedTime: "1–3 دقائق",
       createdAt: new Date(),
       steps: [
-        { id: 1, title: "مراقبة الصفحة", description: "فحص بنية الصفحة المستهدفة", agent: "browser" as const, status: "running" as const },
+        { id: 1, title: "تحليل عميق للمهمة", description: "DeepSeek يفهم المتطلبات الكاملة", agent: "browser" as const, status: "running" as const },
         { id: 2, title: "تنفيذ الإجراءات", description: "تعبئة النماذج والتفاعل مع العناصر", agent: "browser" as const, status: "pending" as const },
         { id: 3, title: "التحقق من النتيجة", description: "التأكد من اكتمال المهمة", agent: "browser" as const, status: "pending" as const },
       ],
@@ -495,28 +541,26 @@ class AgentRunner extends EventEmitter {
 
     const useOllama = ollamaClient.isAvailable();
 
-    if (useOllama) {
-      const thought = await smartChat([
-        { role: "system", content: SYSTEM_PROMPTS.default },
-        { role: "user", content: `المهمة: "${task.description}"\nما الموقع المستهدف وما الخطوات الكاملة؟` },
-      ], { temperature: 0.4, max_tokens: 250, model }, "THINK");
-      this.emitStep(taskId, "THINK", thought || "سأنفذ المهمة خطوة بخطوة");
-    } else {
-      this.emitStep(taskId, "THINK", `خطة تنفيذ: "${task.description}"`);
+    // ── التحليل العميق بـ DeepSeek (مثل تحليل الشات) ──────────────────
+    const targetUrlEarly = extractUrl(task.description) || learningEngine.getLearnedUrl(task.description) || task.url;
+    this.emitStep(taskId, "THINK", `🔍 DeepSeek يحلل المهمة بعمق...`);
+    const { analysis: deepAnalysis, steps: plannedSteps, needsFromUser } = await this.deepAnalyzeTask(task.description, targetUrlEarly);
+    this.emitStep(taskId, "THINK", deepAnalysis);
+
+    // إذا كانت المهمة تحتاج بيانات من المستخدم — أخبره فوراً
+    if (needsFromUser.length > 0) {
+      this.emitStep(taskId, "WARN", `⚠️ **قبل البدء يجب توفير:**\n${needsFromUser.map(n => `- ${n}`).join("\n")}\n\nيرجى تزويد هذه المعلومات في المحادثة حتى يتمكن الوكيل من إكمال المهمة.`);
     }
     await sleep(200);
 
-    const targetUrl = extractUrl(task.description) || learningEngine.getLearnedUrl(task.description) || task.url;
+    const targetUrl = targetUrlEarly;
     const learningHint = learningEngine.buildContextHint(task.description);
     if (learningHint) {
       this.emitStep(taskId, "THINK", `🧠 من الذاكرة المتعلَّمة:\n${learningHint}`);
     }
-    if (useOllama) {
-      const plan = await smartChat([
-        { role: "system", content: SYSTEM_PROMPTS.default },
-        { role: "user", content: `المهمة: "${task.description}". اذكر خطوات التنفيذ بإيجاز.` },
-      ], { temperature: 0.3, max_tokens: 200, model }, "PLAN");
-      this.emitStep(taskId, "PLAN", plan || `الانتقال إلى الموقع وتنفيذ الإجراءات`);
+    // عرض خطة التنفيذ من التحليل العميق
+    if (plannedSteps.length > 0) {
+      this.emitStep(taskId, "PLAN", `خطة التنفيذ (DeepSeek):\n${plannedSteps.map((s, i) => `${i+1}. ${s}`).join("\n")}`);
     } else {
       this.emitStep(taskId, "PLAN", targetUrl
         ? `1. الانتقال إلى ${targetUrl}\n2. تنفيذ الإجراءات\n3. التحقق`
@@ -561,12 +605,24 @@ class AgentRunner extends EventEmitter {
         ? `\nسياق المحادثة: ${browserConvHistory.slice(-2).map(m => `${m.role === "user" ? "مستخدم" : "مساعد"}: ${m.content.substring(0, 80)}`).join(" | ")}\n`
         : "";
 
+      // خطة DeepSeek العميقة تُضاف كسياق دائم في حلقة التنفيذ
+      const deepPlanContext = plannedSteps.length > 0
+        ? [
+            ``,
+            `═══ الخطة المفصلة (حللها DeepSeek) ═══`,
+            plannedSteps.map((s, i) => `${i+1}. ${s}`).join("\n"),
+            `═══════════════════════════════════════`,
+            `اتبع هذه الخطة خطوة بخطوة. لا تتجاوز خطوة إلا بعد إتمامها.`,
+          ].join("\n")
+        : "";
+
       const history: ChatMessage[] = [
         { role: "system", content: ACTION_SYSTEM_PROMPT },
         {
           role: "user",
           content: [
             `المهمة: ${task.description}${browserConvContext}`,
+            deepPlanContext,
             pageHasNoInputs && isLoginTask
               ? `\n💡 تنبيه: الصفحة الحالية لا تحتوي على نموذج إدخال. ابدأ بالنقر على زر تسجيل الدخول أو انتقل مباشرة إلى صفحة تسجيل الدخول للموقع المستهدف: ${targetUrl || "الموقع المطلوب"}\n`
               : "",
@@ -580,7 +636,7 @@ class AgentRunner extends EventEmitter {
             initContent.substring(0, 600),
             ``,
             `═══════════════════════════`,
-            `لقد رأيت الصفحة كاملاً. الآن ابدأ بأول خطوة منطقية بناءً على ما قرأته.`,
+            `لقد رأيت الصفحة كاملاً. الآن ابدأ بأول خطوة منطقية بناءً على ما قرأته واتبع الخطة المحددة.`,
             `أخرج سطر ACTION واحد فقط.`,
           ].join("\n"),
         },
