@@ -310,131 +310,230 @@ class BrowserAgent extends EventEmitter {
     return false;
   }
 
+  // دالة مساعدة: React-safe setter لعنصر select بناءً على index عالمي في الصفحة
+  private async _selectByEvaluate(
+    frame: import("playwright").Frame,
+    selectorOrNth: string | number,
+    value: string,
+    v: string,
+  ): Promise<boolean> {
+    return frame.evaluate(
+      (args: { selectorOrNth: string | number; value: string; v: string }) => {
+        let el: HTMLSelectElement | null = null;
+        if (typeof args.selectorOrNth === "number") {
+          const all = Array.from(document.querySelectorAll<HTMLSelectElement>("select"));
+          el = all[args.selectorOrNth] ?? null;
+        } else {
+          el = document.querySelector<HTMLSelectElement>(args.selectorOrNth);
+        }
+        if (!el) return false;
+
+        const opts = Array.from(el.options);
+        // بحث مرن: exact value → exact text → partial text
+        let match = opts.find(function(o) {
+          return o.value === args.value || o.value.toLowerCase() === args.v;
+        });
+        if (!match) match = opts.find(function(o) {
+          return o.text.toLowerCase() === args.v;
+        });
+        if (!match) match = opts.find(function(o) {
+          return o.text.toLowerCase().includes(args.v) || args.v.includes(o.text.toLowerCase().trim());
+        });
+        if (!match) return false;
+
+        // React-safe setter
+        const proto = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value");
+        const ns = proto && proto.set;
+        if (ns) ns.call(el, match.value); else el.value = match.value;
+
+        // أحداث DOM
+        el.dispatchEvent(new Event("input",  { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+
+        // React Fiber — إطلاق onChange المركّب
+        const fk = Object.keys(el).find(function(k) {
+          return k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance") || k.startsWith("__reactEventHandlers");
+        });
+        if (fk) {
+          let fiber = (el as any)[fk];
+          let attempts = 0;
+          while (fiber && attempts++ < 30) {
+            const p = fiber.memoizedProps || fiber.pendingProps;
+            if (p && typeof p.onChange === "function") {
+              try {
+                p.onChange({
+                  target: el, currentTarget: el, bubbles: true, type: "change",
+                  preventDefault: function() {}, stopPropagation: function() {}, persist: function() {},
+                  nativeEvent: { target: el },
+                });
+              } catch (_) {}
+              break;
+            }
+            fiber = fiber.return;
+          }
+        }
+        return true;
+      },
+      { selectorOrNth, value, v },
+    ).catch(() => false);
+  }
+
   // اختيار قيمة من قائمة — يدعم native <select> والقوائم المخصصة وراديو بتونز
   async smartSelect(hint: string, value: string): Promise<boolean> {
     if (!this.page) return false;
 
-    const h = hint.toLowerCase();
-    const v = value.toLowerCase();
+    const h = hint.toLowerCase().trim();
+    const v = value.toLowerCase().trim();
 
     // استخراج المقطع الأخير من الـ hint (birthday_day → day، birthday_month → month)
     const hintParts = hint.split(/[_\-\s]+/);
-    const shortHint = hintParts[hintParts.length - 1]; // "day" من "birthday_day"
+    const shortHint = hintParts[hintParts.length - 1].toLowerCase();
 
-    // ── 1. محاولة native <select> عبر Playwright مباشرةً (الأسرع والأكثر موثوقية) ──
+    // ── 0. دعم تنسيق nth:N=value (الأكثر دقة) ──────────────────────────
+    // مثال: hint = "nth:1", value = "February" ← يختار القائمة الثانية
+    const nthMatch = h.match(/^nth:?(\d+)$/);
+    if (nthMatch) {
+      const nthIdx = parseInt(nthMatch[1], 10);
+      for (const frame of this.page.frames()) {
+        const ok = await this._selectByEvaluate(frame, nthIdx, value, v);
+        if (ok) { console.log(`[select] nth:${nthIdx} explicit OK`); return true; }
+      }
+    }
+
+    // ── 1. خريطة تاريخ الميلاد: أكثر الحالات شيوعاً — يستخدم الترتيب مباشرة ──
+    // فيسبوك وكثير من المواقع: أول select=يوم، ثاني=شهر، ثالث=سنة
+    const birthdayNthMap: Record<string, number> = {
+      "day": 0, "يوم": 0, "اليوم": 0,
+      "month": 1, "شهر": 1, "الشهر": 1,
+      "year": 2, "سنة": 2, "السنة": 2, "عام": 2,
+    };
+    const birthdayNth = birthdayNthMap[h] ?? birthdayNthMap[shortHint] ?? -1;
+
+    if (birthdayNth >= 0) {
+      console.log(`[select] birthday nth[${birthdayNth}] for hint="${hint}" value="${value}"`);
+      for (const frame of this.page.frames()) {
+        // أولاً: جرّب Playwright selectOption على العنصر في موضعه
+        try {
+          const allSelects = await frame.locator("select").all();
+          if (birthdayNth < allSelects.length) {
+            const loc = allSelects[birthdayNth];
+            try { await loc.selectOption({ value }, { timeout: 1500 }); console.log(`[select] birthday playwright value OK`); return true; } catch {}
+            try { await loc.selectOption({ label: value }, { timeout: 1500 }); console.log(`[select] birthday playwright label OK`); return true; } catch {}
+          }
+        } catch {}
+        // ثانياً: evaluate مع React-safe setter
+        const ok = await this._selectByEvaluate(frame, birthdayNth, value, v);
+        if (ok) { console.log(`[select] birthday nth[${birthdayNth}] react-safe OK`); return true; }
+      }
+    }
+
+    // ── 2. محاولة native <select> بالاسم أو الـ id ──────────────────────
     const nativeSelectors = [
-      `select[name="${hint}"]`,
-      `select[id="${hint}"]`,
-      `select[name="${shortHint}"]`,
-      `select[id="${shortHint}"]`,
-      `select[name*="${hint}"]`,
-      `select[id*="${hint}"]`,
-      `select[name*="${shortHint}"]`,
-      `select[id*="${shortHint}"]`,
+      `select[name="${hint}"]`,    `select[id="${hint}"]`,
+      `select[name="${shortHint}"]`, `select[id="${shortHint}"]`,
+      `select[name*="${hint}"]`,   `select[id*="${hint}"]`,
+      `select[name*="${shortHint}"]`, `select[id*="${shortHint}"]`,
     ];
 
     for (const sel of nativeSelectors) {
       for (const frame of this.page.frames()) {
         try {
-          const loc = frame.locator(sel).first();
-          const count = await loc.count();
+          const count = await frame.locator(sel).count();
           if (count === 0) continue;
-
-          // جرّب value, label, ثم index
-          try { await loc.selectOption({ value }, { timeout: 2000 }); console.log(`[select] native value OK: ${sel}`); return true; } catch {}
-          try { await loc.selectOption({ label: value }, { timeout: 2000 }); console.log(`[select] native label OK: ${sel}`); return true; } catch {}
-
-          // البحث عن خيار مطابق ثم استخدام index
-          const matchInfo: { idx: number; val: string } | null = await frame.evaluate((args: { sel: string; v: string; value: string }) => {
-            const el = document.querySelector<HTMLSelectElement>(args.sel);
-            if (!el) return null;
-            const opts = Array.from(el.options);
-            let idx = opts.findIndex(o => o.value === args.value || o.value.toLowerCase() === args.v);
-            if (idx < 0) idx = opts.findIndex(o => o.text.toLowerCase() === args.v || o.text.toLowerCase().includes(args.v) || args.v.includes(o.text.toLowerCase().trim()));
-            if (idx < 0) return null;
-            return { idx, val: opts[idx].value };
-          }, { sel, v, value });
-
-          if (matchInfo) {
-            try { await loc.selectOption({ index: matchInfo.idx }, { timeout: 2000 }); console.log(`[select] native index OK: ${sel}[${matchInfo.idx}]`); return true; } catch {}
-
-            // React-safe setter — استخدام function declaration لتجنب خطأ __name
-            const ok = await frame.evaluate((args: { sel: string; val: string }) => {
-              const el = document.querySelector<HTMLSelectElement>(args.sel);
-              if (!el) return false;
-              const proto = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value");
-              const nativeSetter = proto && proto.set;
-              if (nativeSetter) nativeSetter.call(el, args.val); else el.value = args.val;
-              el.dispatchEvent(new Event("input", { bubbles: true }));
-              el.dispatchEvent(new Event("change", { bubbles: true }));
-              const fk = Object.keys(el).find(function(k) { return k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance"); });
-              if (fk) {
-                let fiber = (el as any)[fk];
-                while (fiber) {
-                  const p = fiber.memoizedProps || fiber.pendingProps;
-                  if (p && p.onChange) { p.onChange({ target: el, currentTarget: el, bubbles: true, preventDefault: function() {}, stopPropagation: function() {}, persist: function() {} }); break; }
-                  fiber = fiber.return;
-                }
-              }
-              return true;
-            }, { sel, val: matchInfo.val });
-            if (ok) { console.log(`[select] react-safe setter OK: ${sel}`); return true; }
-          }
+          // Playwright أولاً
+          const loc = frame.locator(sel).first();
+          try { await loc.selectOption({ value }, { timeout: 1500 }); console.log(`[select] native value OK: ${sel}`); return true; } catch {}
+          try { await loc.selectOption({ label: value }, { timeout: 1500 }); console.log(`[select] native label OK: ${sel}`); return true; } catch {}
+          // React-safe setter
+          const ok = await this._selectByEvaluate(frame, sel, value, v);
+          if (ok) { console.log(`[select] native react-safe OK: ${sel}`); return true; }
         } catch {}
       }
     }
 
-    // ── 2. بحث شامل في كل select بجميع الإطارات ────────────────────────────
-    const sh = shortHint.toLowerCase();
+    // ── 3. بحث شامل في كل select — يطابق بناءً على الاسم/id/aria/label ──
     for (const frame of this.page.frames()) {
       try {
-        const found = await frame.evaluate((args: { h: string; sh: string; v: string; value: string }) => {
-          const selects = Array.from(document.querySelectorAll<HTMLSelectElement>("select"));
-          for (const el of selects) {
-            const ctx = [el.name, el.id, el.getAttribute("aria-label") || "", (el.labels && el.labels[0] ? el.labels[0].textContent : "") || "", (el.previousElementSibling as HTMLElement | null)?.textContent || ""].join(" ").toLowerCase();
-            // طابق إذا: ctx يحتوي على hint الكامل أو shortHint أو id/name الحقل موجود في hint
-            const hintMatch = args.h === "" || ctx.includes(args.h) || ctx.includes(args.sh) || args.h.includes(el.id.toLowerCase()) || args.h.includes(el.name.toLowerCase());
-            if (!hintMatch) continue;
-            const opts = Array.from(el.options);
-            const match = opts.find(function(o) { return o.value === args.value || o.value.toLowerCase() === args.v || o.text.toLowerCase() === args.v || o.text.toLowerCase().includes(args.v) || args.v.includes(o.text.toLowerCase().trim()); });
-            if (!match) continue;
-            const proto = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value");
-            const ns = proto && proto.set;
-            if (ns) ns.call(el, match.value); else el.value = match.value;
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            el.dispatchEvent(new Event("change", { bubbles: true }));
-            return true;
-          }
-          return false;
-        }, { h, sh, v, value });
-        if (found) { console.log(`[select] broad search OK in ${frame.url()}`); return true; }
+        const result = await frame.evaluate(
+          (args: { h: string; sh: string; v: string; value: string }) => {
+            const selects = Array.from(document.querySelectorAll<HTMLSelectElement>("select"));
+            for (const el of selects) {
+              const name  = (el.name  || "").toLowerCase();
+              const id    = (el.id    || "").toLowerCase();
+              const aria  = (el.getAttribute("aria-label") || "").toLowerCase();
+              const lbl   = (el.labels?.[0]?.textContent   || "").toLowerCase();
+              const prev  = ((el.previousElementSibling as HTMLElement | null)?.textContent || "").toLowerCase();
+              const ctx   = [name, id, aria, lbl, prev].join(" ");
+
+              // المطابقة: الـ ctx يحتوي على hint أو hint يحتوي على id/name
+              const match = ctx.includes(args.h) || ctx.includes(args.sh)
+                         || (id   && args.h.includes(id))
+                         || (name && args.h.includes(name));
+              if (!match) continue;
+
+              const opts = Array.from(el.options);
+              const opt  = opts.find(function(o) {
+                return o.value === args.value || o.value.toLowerCase() === args.v
+                    || o.text.toLowerCase() === args.v
+                    || o.text.toLowerCase().includes(args.v)
+                    || args.v.includes(o.text.toLowerCase().trim());
+              });
+              if (!opt) continue;
+
+              // React-safe setter
+              const proto = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value");
+              const ns = proto?.set;
+              if (ns) ns.call(el, opt.value); else el.value = opt.value;
+              el.dispatchEvent(new Event("input",  { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+              const fk = Object.keys(el).find(function(k) {
+                return k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance") || k.startsWith("__reactEventHandlers");
+              });
+              if (fk) {
+                let fiber = (el as any)[fk]; let att = 0;
+                while (fiber && att++ < 30) {
+                  const p = fiber.memoizedProps || fiber.pendingProps;
+                  if (p?.onChange) { try { p.onChange({ target: el, currentTarget: el, bubbles: true, type: "change", preventDefault: function(){}, stopPropagation: function(){}, persist: function(){}, nativeEvent: { target: el } }); } catch(_){} break; }
+                  fiber = fiber.return;
+                }
+              }
+              return true;
+            }
+            return false;
+          },
+          { h, sh: shortHint, v, value },
+        );
+        if (result) { console.log(`[select] broad search OK`); return true; }
       } catch {}
     }
 
-    // ── 3. Radio buttons (جنس / نعم-لا) ──────────────────────────────────
+    // ── 4. Radio buttons (جنس / نعم-لا) ──────────────────────────────────
     for (const frame of this.page.frames()) {
       try {
-        const clicked = await frame.evaluate((args: { h: string; v: string; value: string }) => {
-          const radios = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='radio']"));
-          for (const r of radios) {
-            const lbl = (r.labels && r.labels[0] ? r.labels[0].textContent : "") || "";
-            const aria = r.getAttribute("aria-label") || "";
-            const rv = r.value || "";
-            const parent = r.parentElement ? r.parentElement.textContent || "" : "";
-            const all = [lbl, aria, rv, parent].join(" ").toLowerCase();
-            if (all.includes(args.v) || args.v.includes(rv.toLowerCase()) || (args.h && all.includes(args.h))) {
-              r.click();
-              r.dispatchEvent(new Event("change", { bubbles: true }));
-              return true;
+        const clicked = await frame.evaluate(
+          (args: { h: string; v: string; value: string }) => {
+            const radios = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='radio']"));
+            for (const r of radios) {
+              const lbl    = (r.labels?.[0]?.textContent || "").toLowerCase();
+              const aria   = (r.getAttribute("aria-label") || "").toLowerCase();
+              const rv     = (r.value || "").toLowerCase();
+              const parent = (r.parentElement?.textContent || "").toLowerCase();
+              const all    = [lbl, aria, rv, parent].join(" ");
+              if (all.includes(args.v) || args.v.includes(rv) || (args.h && all.includes(args.h))) {
+                r.click();
+                r.dispatchEvent(new Event("change", { bubbles: true }));
+                return true;
+              }
             }
-          }
-          return false;
-        }, { h, v, value });
+            return false;
+          },
+          { h, v, value },
+        );
         if (clicked) { console.log(`[select] radio clicked for "${value}"`); return true; }
       } catch {}
     }
 
-    // ── 4. القوائم المخصصة (React/MUI) — Click + Pick ──────────────────
+    // ── 5. القوائم المخصصة (React/MUI) — Click + Pick ──────────────────
     console.log(`[select] trying custom dropdown for hint="${hint}" value="${value}"`);
     return this._customDropdownSelect(hint, value);
   }
@@ -648,14 +747,22 @@ class BrowserAgent extends EventEmitter {
 
       if (data.inputs.length > 0) {
         lines.push("\nحقول الإدخال:");
+        let selectIdx = 0;
         data.inputs.forEach((inp: any) => {
           const visibleLabel = inp.label || inp.placeholder || "";
           const fillKey      = inp.name || inp.id || inp.type;
           if (inp.tag === "select") {
-            const opts = (inp.options || []).join(" | ");
-            const firstOpt = inp.firstOption || "";
-            const labelHint = visibleLabel || firstOpt;
-            lines.push(`  - [قائمة] select PARAM: ${fillKey}=<الخيار>  (مفتاح البحث: "${labelHint}", خيارات: ${opts})`);
+            const opts        = (inp.options || []).join(" | ");
+            const firstOpt    = inp.firstOption || "";
+            const labelHint   = visibleLabel || firstOpt;
+            const currentIdx  = selectIdx++;
+            // أظهر كلا الصيغتين: الاسم/id والترتيب (nth)
+            const nameKey  = fillKey && fillKey !== "select" ? `select PARAM: ${fillKey}=<الخيار>` : "";
+            const nthKey   = `select PARAM: nth:${currentIdx}=<الخيار>`;
+            lines.push(
+              `  - [قائمة#${currentIdx}] ${nameKey ? nameKey + "  أو  " : ""}${nthKey}` +
+              `  (تسمية: "${labelHint}", خيارات: ${opts})`
+            );
           } else {
             const identifier = inp.name ? `name="${inp.name}"` : (inp.id ? `id="${inp.id}"` : `type="${inp.type}"`);
             lines.push(`  - [حقل] fill PARAM: ${fillKey}=<القيمة>  (${identifier}${visibleLabel ? `, تسمية: "${visibleLabel}"` : ""})`);

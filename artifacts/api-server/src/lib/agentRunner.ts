@@ -115,12 +115,20 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - مثال: "fill PARAM: firstname=أحمد" ← "fill PARAM: email=user@example.com"
 
 قاعدة select (للقوائم المنسدلة — native ومخصصة):
-- يعمل مع جميع أنواع القوائم: <select> الأصلية، React Select، Material UI، Ant Design، وغيرها
-- استخدم اسم الحقل الفعلي الظاهر في هيكل الصفحة (name= أو id=) — وليس اسماً تخمينياً
-- فيسبوك تحديداً: حقول تاريخ الميلاد تحمل id="day" و id="month" و id="year" (وليس birthday_day)
-  مثال صحيح: select PARAM: day=15 | select PARAM: month=2 | select PARAM: year=1990
-- مثال جنس: select PARAM: sex=ذكر (إذا ظهر id="sex" في الهيكل)
-- إذا لم يظهر الاسم الدقيق في الهيكل، استخدم النص المرئي (مثال: select PARAM: اليوم=15)
+- يعمل مع جميع أنواع القوائم: <select> الأصلية، React Select، Material UI، وغيرها
+- هيكل الصفحة يُظهر القوائم هكذا: [قائمة#0] [قائمة#1] [قائمة#2]
+  الرقم بعد # هو ترتيب القائمة في الصفحة (ابدأ من 0)
+- استخدم دائماً صيغة nth عندما يكون الترتيب ظاهراً في الهيكل:
+  select PARAM: nth:0=<الخيار>  ← القائمة الأولى (اليوم عادةً)
+  select PARAM: nth:1=<الخيار>  ← القائمة الثانية (الشهر عادةً)
+  select PARAM: nth:2=<الخيار>  ← القائمة الثالثة (السنة عادةً)
+- أو استخدم اسم الحقل إذا ظهر في الهيكل: select PARAM: day=15
+- فيسبوك تحديداً: تاريخ الميلاد له ثلاث قوائم بالترتيب:
+  select PARAM: nth:0=15  (اليوم)
+  select PARAM: nth:1=2   (الشهر — February)
+  select PARAM: nth:2=1990 (السنة)
+  select PARAM: sex=ذكر   (الجنس — راديو)
+- اقرأ هيكل الصفحة جيداً وحدد الترتيب الصحيح قبل الاختيار
 
 قاعدة done (مهمة جداً — لا تتجاهلها):
 - لا تستخدم "done" إلا بعد التحقق الفعلي من نجاح العملية:
@@ -131,24 +139,24 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - بعد النقر على زر الإرسال أو التأكيد: استخدم "wait" أولاً، ثم قيّم الصفحة قبل "done"
 
 أمثلة كاملة لتسجيل في فيسبوك:
-ACTION: navigate | PARAM: https://www.facebook.com
-ACTION: click | PARAM: Create new account
+ACTION: navigate | PARAM: https://www.facebook.com/reg
 ACTION: fill | PARAM: firstname=أحمد
 ACTION: fill | PARAM: lastname=محمد
-ACTION: ask | PARAM: أدخل بريدك الإلكتروني
+ACTION: ask | PARAM: أدخل بريدك الإلكتروني أو رقم هاتفك
 ACTION: fill | PARAM: reg_email__=ahmed@example.com
 ACTION: ask | PARAM: أدخل كلمة المرور
 ACTION: fill | PARAM: reg_passwd__=MyPassword123
-ACTION: select | PARAM: day=15
-ACTION: select | PARAM: month=2
-ACTION: select | PARAM: year=1990
+[اقرأ هيكل الصفحة لمعرفة ترتيب القوائم — عادةً: #0=اليوم، #1=الشهر، #2=السنة]
+ACTION: select | PARAM: nth:0=15
+ACTION: select | PARAM: nth:1=2
+ACTION: select | PARAM: nth:2=1990
 ACTION: select | PARAM: sex=ذكر
-ACTION: click | PARAM: Create new account
+ACTION: click | PARAM: إنشاء حساب جديد
 ACTION: wait | PARAM: waiting
 [الآن تحقق من URL والصفحة — إذا تغيّرت → done، إذا بقيت أخطاء → صحّح]
 ACTION: done | PARAM: تم إنشاء الحساب بنجاح (فقط إذا تغيّرت الصفحة فعلاً)
 
-تنبيه مهم: استخدم دائماً اسم الحقل الفعلي الظاهر في بنية الصفحة (name= أو id=). فيسبوك: id="day"، id="month"، id="year" — وليس "birthday_day".
+تنبيه مهم: اقرأ هيكل الصفحة أولاً. القوائم المنسدلة تُظهر [قائمة#0] [قائمة#1] [قائمة#2] — استخدم رقم الترتيب مع nth. لا تتخمن الأسماء.
 
 القواعد الصارمة:
 - أخرج سطر ACTION واحد فقط، لا شيء آخر أبداً
@@ -745,7 +753,8 @@ async function executeAction(
     case "select": {
       const eqIdx2 = param.indexOf("=");
       if (eqIdx2 === -1) return { success: false, error: `صيغة خاطئة — يجب أن تكون: اسم_القائمة=الخيار` };
-      const selField = param.substring(0, eqIdx2).trim().replace(/[:\s]\d+$/, "");
+      // لا تحذف nth:N — فقط نظّف المسافات الزائدة
+      const selField = param.substring(0, eqIdx2).trim();
       const selValue = param.substring(eqIdx2 + 1).trim();
       const selected = await browserAgent.smartSelect(selField, selValue);
       if (!selected) {
