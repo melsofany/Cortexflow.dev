@@ -15,8 +15,14 @@ import {
   buildRealityChecklist,
   buildPreResearchPrompt,
   buildDoneVerificationPrompt,
+  buildPostActionVerifyPrompt,
+  buildPlatformAwarePrompt,
   detectFabricatedUrl,
+  findPlatformPlaybook,
+  parseReasoningLine,
   ErrorPatternTracker,
+  SubGoalTracker,
+  REASONING_ACTION_SYSTEM_PROMPT,
 } from "./preTaskResearcher.js";
 
 const MAX_ITERATIONS = 50;
@@ -750,14 +756,29 @@ class AgentRunner extends EventEmitter {
         ].join("\n") : "",
       ].filter(Boolean).join("\n");
 
+      // ── تهيئة SubGoalTracker ───────────────────────────────────────────────
+      const subGoalTracker = new SubGoalTracker();
+      if (plannedSteps.length > 0) {
+        subGoalTracker.initialize(plannedSteps);
+        this.emitStep(taskId, "PLAN", `🗺️ تتبع الأهداف الفرعية:\n${subGoalTracker.getProgressReport()}`);
+      }
+
+      // ── Platform Playbook ────────────────────────────────────────────────
+      const playbook = findPlatformPlaybook(task.description);
+      const playbookContext = playbook ? buildPlatformAwarePrompt(playbook) : "";
+      if (playbook) {
+        this.emitStep(taskId, "THINK", `📚 قاعدة معرفة المنصة مُفعَّلة: ${playbook.platform}`);
+      }
+
       const history: ChatMessage[] = [
-        { role: "system", content: ACTION_SYSTEM_PROMPT },
+        { role: "system", content: REASONING_ACTION_SYSTEM_PROMPT },
         {
           role: "user",
           content: [
             urlConstraint,
             `المهمة: ${task.description}${browserConvContext}`,
             deepPlanContext,
+            playbookContext ? `\n${playbookContext}\n` : "",
             pageHasNoInputs && isLoginTask
               ? `\n💡 تنبيه: الصفحة الحالية لا تحتوي على نموذج إدخال. ابدأ بالنقر على زر تسجيل الدخول أو انتقل مباشرة إلى صفحة تسجيل الدخول للموقع المستهدف: ${targetUrl || "الموقع المطلوب"}\n`
               : "",
@@ -771,8 +792,9 @@ class AgentRunner extends EventEmitter {
             initContent.substring(0, 600),
             ``,
             `═══════════════════════════`,
+            subGoalTracker.getCurrentGoal() ? `\n${subGoalTracker.getCurrentGoalContext()}\n` : "",
             `لقد رأيت الصفحة كاملاً. الآن ابدأ بأول خطوة منطقية بناءً على ما قرأته واتبع الخطة المحددة.`,
-            `أخرج سطر ACTION واحد فقط.`,
+            `أخرج سطرين: THINK ثم ACTION.`,
           ].join("\n"),
         },
       ];
@@ -831,11 +853,16 @@ class AgentRunner extends EventEmitter {
                 `═══ تذكير بالهدف (الخطوة ${i}) ═══`,
                 plannedSteps.length > 0 ? `الخطة الكاملة:\n${plannedSteps.map((s, idx) => `${idx+1}. ${s}`).join("\n")}` : ``,
                 completionCriteria.length > 0 ? `المهمة مكتملة فقط عندما:\n${completionCriteria.map(c => `  ✓ ${c}`).join("\n")}` : ``,
+                subGoalTracker.getCurrentGoal() ? `\n${subGoalTracker.getProgressReport()}\n${subGoalTracker.getCurrentGoalContext()}` : ``,
                 `الرابط الحالي: ${url}`,
                 `هل وصلت لكل هذه المعايير؟ إذا لا → تابع. إذا نعم → done`,
                 `═══════════════════════════════════`,
               ].filter(Boolean).join("\n")
             : "";
+          // إضافة سياق SubGoalTracker كل 5 خطوات
+          if (i % 5 === 0 && subGoalTracker.getCurrentGoal()) {
+            this.emitStep(taskId, "PLAN", subGoalTracker.getProgressReport());
+          }
 
           const pageState = [
             `─── تحديث الصفحة (الخطوة ${i}) ───`,
@@ -844,7 +871,8 @@ class AgentRunner extends EventEmitter {
             struct,
             `النص المرئي: ${content.substring(0, 400)}`,
             periodicReminder,
-            `الخطوة ${i} من ${MAX_ITERATIONS}: أخرج سطر ACTION واحد فقط.`,
+            subGoalTracker.getCurrentGoal() ? subGoalTracker.getCurrentGoalContext() : "",
+            `الخطوة ${i} من ${MAX_ITERATIONS}: أخرج سطرين فقط: THINK ثم ACTION.`,
           ].filter(Boolean).join("\n");
           history.push({ role: "user", content: pageState });
         }
@@ -852,7 +880,7 @@ class AgentRunner extends EventEmitter {
         let raw = "";
         for (let retry = 0; retry < MAX_RETRIES; retry++) {
           try {
-            raw = await smartChat(history, { temperature: 0.15, max_tokens: 80, model }, "ACT");
+            raw = await smartChat(history, { temperature: 0.15, max_tokens: 160, model }, "ACT");
             break;
           } catch (err: any) {
             if (retry === MAX_RETRIES - 1) {
@@ -862,6 +890,13 @@ class AgentRunner extends EventEmitter {
         }
 
         history.push({ role: "assistant", content: raw });
+
+        // ── استخراج الاستدلال الإلزامي (THINK) وعرضه ──────────────────────
+        const reasoning = parseReasoningLine(raw);
+        if (reasoning?.think) {
+          this.emitStep(taskId, "THINK", `🧠 [${i}] ${reasoning.think}`);
+        }
+
         const parsed = parseAction(raw);
 
         if (!parsed) {
@@ -875,7 +910,7 @@ class AgentRunner extends EventEmitter {
           } else if (consecutiveFails >= 3) {
             history.push({
               role: "user",
-              content: `IMPORTANT: You must respond with EXACTLY this format:\nACTION: navigate | PARAM: https://...\nDo NOT explain. ONE line only.`,
+              content: `IMPORTANT: You must respond with EXACTLY this format:\nTHINK: [what you see] | [expected result] | [why this action]\nACTION: navigate | PARAM: https://...\nTwo lines. Nothing else.`,
             });
             consecutiveFails = 0;
           }
@@ -885,6 +920,7 @@ class AgentRunner extends EventEmitter {
 
         consecutiveFails = 0;
         const { action, param } = parsed;
+        subGoalTracker.incrementAttempt();
         this.emitStep(taskId, "ACT", `خطوة ${i}: ${action} → ${param}`);
 
         // ── كشف الإجراءات المتكررة (wait/navigate لنفس الرابط) ──────────────
@@ -950,7 +986,11 @@ class AgentRunner extends EventEmitter {
             if (vJson) {
               const v = JSON.parse(vJson[0]);
               if (v.completed === true) {
+                subGoalTracker.markCurrentDone(v.evidence || param);
                 this.emitStep(taskId, "THINK", `✅ تم التحقق بالدليل المرئي: ${v.evidence}`);
+                if (subGoalTracker.getCurrentGoal()) {
+                  this.emitStep(taskId, "PLAN", subGoalTracker.getProgressReport());
+                }
                 finalResult = param || v.evidence || "اكتملت المهمة بنجاح";
                 break;
               } else {
