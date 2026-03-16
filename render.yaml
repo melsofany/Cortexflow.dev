@@ -3,7 +3,7 @@ services:
   - type: web
     name: cortexflow-api
     runtime: node
-    repo: https://github.com/melsofany/Cortexflow.dev
+    repo: https://github.com/melsofany/Cortexflow-dev
     branch: master
     buildCommand: >-
       npm install -g pnpm@10 &&
@@ -31,7 +31,7 @@ services:
   - type: web
     name: cortexflow-agent
     runtime: python
-    repo: https://github.com/melsofany/Cortexflow.dev
+    repo: https://github.com/melsofany/Cortexflow-dev
     branch: master
     buildCommand: >-
       apt-get install -y chromium-browser chromium-chromedriver 2>/dev/null || true;
@@ -53,7 +53,7 @@ services:
   # ── Frontend (Static) ────────────────────────────────────────────────────────
   - type: static
     name: cortexflow-web
-    repo: https://github.com/melsofany/Cortexflow.dev
+    repo: https://github.com/melsofany/Cortexflow-dev
     branch: master
     buildCommand: >-
       npm install -g pnpm@10 &&
