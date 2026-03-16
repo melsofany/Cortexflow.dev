@@ -179,6 +179,108 @@ class BrowserAgent extends EventEmitter {
     return false;
   }
 
+  // التعامل مع القوائم المنسدلة المخصصة (غير native) — مثل React Select, MUI, Ant Design
+  async smartDropdown(hint: string, value: string): Promise<boolean> {
+    if (!this.page) return false;
+
+    const h = hint.toLowerCase();
+    const v = value.toLowerCase();
+
+    // دالة للبحث عن وفتح القائمة المنسدلة المخصصة
+    const tryOpen = async (selector: string): Promise<boolean> => {
+      try {
+        const loc = this.page!.locator(selector).first();
+        await loc.waitFor({ state: "visible", timeout: 3000 });
+        await loc.click();
+        await this.page!.waitForTimeout(600);
+        return true;
+      } catch { return false; }
+    };
+
+    // البحث عن العنصر المشغّل للقائمة
+    const opened = await this.page.evaluate(async ({ h }) => {
+      const candidates: Element[] = [];
+
+      // combobox / listbox بـ ARIA
+      candidates.push(...Array.from(document.querySelectorAll('[role="combobox"], [role="listbox"], [aria-haspopup="listbox"], [aria-haspopup="true"]')));
+      // عناصر تبدو كقوائم منسدلة مخصصة
+      candidates.push(...Array.from(document.querySelectorAll('[class*="select" i], [class*="dropdown" i], [class*="picker" i], [class*="combobox" i]')));
+      // عناصر data-* شائعة
+      candidates.push(...Array.from(document.querySelectorAll('[data-select], [data-dropdown]')));
+
+      for (const el of candidates) {
+        const text   = (el as HTMLElement).innerText?.toLowerCase() || "";
+        const aria   = (el.getAttribute("aria-label") || "").toLowerCase();
+        const name   = (el.getAttribute("name") || "").toLowerCase();
+        const id     = (el.id || "").toLowerCase();
+        const ph     = (el.getAttribute("placeholder") || "").toLowerCase();
+        const lbl    = (el.closest("label") || document.querySelector(`label[for="${el.id}"]`));
+        const lblTxt = lbl ? (lbl as HTMLElement).innerText?.toLowerCase() : "";
+
+        if (aria.includes(h) || name.includes(h) || id.includes(h) || ph.includes(h) || lblTxt.includes(h)) {
+          (el as HTMLElement).click();
+          return true;
+        }
+      }
+      return false;
+    }, { h });
+
+    if (!opened) {
+      // محاولة فتح بـ getByLabel
+      try {
+        const trigger = this.page.getByLabel(hint, { exact: false }).first();
+        await trigger.waitFor({ state: "visible", timeout: 2000 });
+        await trigger.click();
+        await this.page.waitForTimeout(600);
+      } catch {
+        // محاولة بـ role=combobox مع نص يطابق hint
+        const found = await tryOpen(`[role="combobox"][aria-label*="${hint}"]`) ||
+                      await tryOpen(`[role="combobox"][placeholder*="${hint}"]`) ||
+                      await tryOpen(`[aria-label*="${hint}"]`);
+        if (!found) return false;
+      }
+    } else {
+      await this.page.waitForTimeout(600);
+    }
+
+    // الآن البحث عن الخيار في القائمة المفتوحة
+    try {
+      // خيارات ARIA
+      const optionFound = await this.page.evaluate(({ v }) => {
+        const options = Array.from(document.querySelectorAll(
+          '[role="option"], [role="listitem"], [class*="option" i], [class*="item" i], [class*="choice" i], li'
+        ));
+        for (const opt of options) {
+          const el = opt as HTMLElement;
+          if (!el.offsetParent && !el.closest('[aria-expanded="true"]') && el.style.display === "none") continue;
+          const txt = el.innerText?.toLowerCase().trim() || "";
+          if (txt === v || txt.includes(v) || v.includes(txt)) {
+            el.click();
+            return true;
+          }
+        }
+        return false;
+      }, { v });
+
+      if (optionFound) return true;
+
+      // محاولة بـ Playwright getByRole option
+      try {
+        await this.page.getByRole("option", { name: value }).first().click({ timeout: 3000 });
+        return true;
+      } catch {}
+
+      // محاولة بـ نص مرئي
+      try {
+        await this.page.locator(`text="${value}"`).first().click({ timeout: 3000 });
+        return true;
+      } catch {}
+
+    } catch {}
+
+    return false;
+  }
+
   // اختيار قيمة من قائمة <select> بطريقة ذكية (بالنص أو القيمة أو الرقم)
   async smartSelect(hint: string, value: string): Promise<boolean> {
     if (!this.page) return false;
@@ -291,7 +393,8 @@ class BrowserAgent extends EventEmitter {
       if (found) return true;
     } catch {}
 
-    return false;
+    // استراتيجية 4: القوائم المنسدلة المخصصة (React Select, MUI, Ant Design, etc.)
+    return this.smartDropdown(hint, value);
   }
 
   async type(text: string): Promise<void> {
@@ -350,6 +453,33 @@ class BrowserAgent extends EventEmitter {
           return base;
         });
 
+        // كشف القوائم المنسدلة المخصصة (React Select, MUI, Ant Design, etc.)
+        const customDropdowns: any[] = [];
+        const seen = new Set<Element>();
+        const ddSelectors = [
+          '[role="combobox"]', '[role="listbox"]',
+          '[aria-haspopup="listbox"]', '[aria-haspopup="true"]',
+          '[class*="select" i]:not(select)', '[class*="dropdown" i]',
+          '[class*="picker" i]', '[class*="combobox" i]',
+        ];
+        for (const sel of ddSelectors) {
+          for (const el of Array.from(document.querySelectorAll(sel)).slice(0, 10)) {
+            if (seen.has(el)) continue;
+            // تجاهل العناصر غير المرئية
+            const rect = (el as HTMLElement).getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            seen.add(el);
+            const ariaLabel = el.getAttribute("aria-label") || "";
+            const name = el.getAttribute("name") || "";
+            const id = el.id || "";
+            const ph = el.getAttribute("placeholder") || "";
+            const lbl = document.querySelector(`label[for="${id}"]`);
+            const lblText = lbl ? (lbl as HTMLElement).innerText?.trim() : "";
+            const innerText = (el as HTMLElement).innerText?.trim().slice(0, 40) || "";
+            customDropdowns.push({ ariaLabel, name, id, placeholder: ph, label: lblText, currentText: innerText });
+          }
+        }
+
         const buttons = Array.from(document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button'], a.btn, a[href]")).slice(0, 30).map((el: any) => ({
           tag: el.tagName.toLowerCase(),
           text: el.textContent?.trim().slice(0, 60) || "",
@@ -360,7 +490,7 @@ class BrowserAgent extends EventEmitter {
         const title = document.title || "";
         const url = window.location.href;
 
-        return { inputs, buttons, title, url };
+        return { inputs, customDropdowns, buttons, title, url };
       });
 
       const lines: string[] = [];
@@ -379,6 +509,15 @@ class BrowserAgent extends EventEmitter {
             const identifier = inp.name ? `name="${inp.name}"` : (inp.id ? `id="${inp.id}"` : `type="${inp.type}"`);
             lines.push(`  - [حقل] fill PARAM: ${fillKey}=<القيمة>  (${identifier}${visibleLabel ? `, تسمية: "${visibleLabel}"` : ""})`);
           }
+        });
+      }
+
+      if (data.customDropdowns && data.customDropdowns.length > 0) {
+        lines.push("\nقوائم منسدلة مخصصة (استخدم select):");
+        data.customDropdowns.forEach((dd: any) => {
+          const key = dd.name || dd.id || dd.ariaLabel || dd.label || dd.placeholder || "dropdown";
+          const lbl = dd.label || dd.ariaLabel || dd.placeholder || dd.currentText || "";
+          lines.push(`  - [قائمة مخصصة] select PARAM: ${key}=<الخيار>  (تسمية: "${lbl}")`);
         });
       }
 

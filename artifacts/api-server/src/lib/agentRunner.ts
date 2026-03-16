@@ -84,7 +84,7 @@ ACTION: <الإجراء> | PARAM: <القيمة>
   navigate  - الانتقال إلى رابط URL: PARAM: https://...
   click     - النقر على عنصر بالنص المرئي: PARAM: نص_الزر
   fill      - ملء حقل نصي: PARAM: اسم_الحقل=القيمة
-  select    - اختيار من قائمة منسدلة <select>: PARAM: اسم_القائمة=الخيار
+  select    - اختيار من أي قائمة منسدلة (native <select> أو مخصصة مثل React Select/MUI): PARAM: اسم_القائمة=الخيار
   ask       - اطلب من المستخدم إدخال بيانات حساسة: PARAM: وصف ما تحتاجه
   type      - كتابة نص في العنصر المحدد: PARAM: النص
   key       - ضغط مفتاح: PARAM: Enter أو Tab أو Escape
@@ -110,9 +110,11 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - استخدم اسم الحقل من name= أو id= الظاهر في هيكل الصفحة
 - مثال: "fill PARAM: firstname=أحمد" ← "fill PARAM: email=user@example.com"
 
-قاعدة select (للقوائم المنسدلة كالشهر والسنة والجنس):
-- استخدم اسم القائمة من name= وقيمة الخيار النصية الظاهرة
+قاعدة select (للقوائم المنسدلة — native ومخصصة):
+- يعمل مع جميع أنواع القوائم: <select> الأصلية، React Select، Material UI، Ant Design، وغيرها
+- استخدم اسم القائمة من name= أو id= أو aria-label= أو التسمية المرئية
 - مثال: "select PARAM: month=يناير" ← "select PARAM: year=1990" ← "select PARAM: day=15"
+- إذا ظهرت قائمة مخصصة في هيكل الصفحة، استخدم select بنفس الطريقة — النظام سيتعامل معها تلقائياً
 
 أمثلة كاملة لتسجيل في فيسبوك:
 ACTION: navigate | PARAM: https://www.facebook.com
