@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Key, CheckCircle, XCircle, Loader2, Trash2, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const API_BASE = '/api';
+const API_BASE = `${(import.meta.env.VITE_API_URL as string) || ''}/api`;
 
 interface DeepSeekStatus {
   configured: boolean;

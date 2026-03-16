@@ -75,7 +75,7 @@ interface SelfImprovementData {
   suggestions: string[];
 }
 
-const API_BASE = '/api';
+const API_BASE = `${(import.meta.env.VITE_API_URL as string) || ''}/api`;
 
 async function fetchModels(): Promise<ModelInfo[]> {
   try {
