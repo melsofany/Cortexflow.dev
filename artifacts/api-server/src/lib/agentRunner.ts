@@ -465,7 +465,7 @@ class AgentRunner extends EventEmitter {
   }
 
   // ── التحليل العميق للمهمة قبل التنفيذ (مثل DeepSeek في الشات) ─────────
-  private async deepAnalyzeTask(taskDescription: string, targetUrl: string | null): Promise<{ analysis: string; steps: string[]; needsFromUser: string[] }> {
+  private async deepAnalyzeTask(taskDescription: string, targetUrl: string | null): Promise<{ analysis: string; steps: string[]; needsFromUser: string[]; targetUrl: string | null }> {
     const DEEP_ANALYSIS_PROMPT = `أنت CortexFlow، وكيل ذكاء اصطناعي متقدم. مهمتك تحليل المهمة التالية بعمق كامل قبل التنفيذ.
 
 قم بما يلي:
@@ -832,8 +832,27 @@ class AgentRunner extends EventEmitter {
           continue;
         }
 
+        // ── منع الانحراف عن الرابط المستهدف في إجراء navigate ─────────────
+        let effectiveAction = action;
+        let effectiveParam  = param;
+        if (action === "navigate" && targetUrl) {
+          try {
+            const destHost   = new URL(param.startsWith("http") ? param : "https://" + param).hostname.replace(/^www\./, "");
+            const targetHost = new URL(targetUrl).hostname.replace(/^www\./, "");
+            if (destHost !== targetHost && !targetHost.includes(destHost) && !destHost.includes(targetHost)) {
+              this.emitStep(taskId, "WARN", `🚫 تم منع الانتقال إلى ${param} — الرابط المقفل هو: ${targetUrl}`);
+              history.push({
+                role: "user",
+                content: `تحذير: لقد حاولت الانتقال إلى ${param} لكن هذه المهمة مقفلة على ${targetUrl}.\nلا تنتقل إلى أي موقع آخر. تابع العمل على ${targetUrl} فقط.`,
+              });
+              effectiveAction = "navigate";
+              effectiveParam  = targetUrl;
+            }
+          } catch { }
+        }
+
         try {
-          const actionResult = await executeAction(action, param);
+          const actionResult = await executeAction(effectiveAction, effectiveParam);
           // لقطة فورية بعد كل إجراء للمزامنة مع التفكير
           await browserAgent.captureNow();
           // إبلاغ النموذج بفشل fill/select لكي يحاول بطريقة مختلفة
