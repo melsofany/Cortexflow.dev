@@ -401,8 +401,8 @@ const ChatPanel = memo(({
       <div className="flex-1 overflow-y-auto py-4" style={{ overscrollBehavior: 'contain' }}>
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-6 py-16 text-center">
-            <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-600/30 to-violet-600/30 border border-indigo-500/20 flex items-center justify-center mb-6">
-              <Bot size={36} className="text-indigo-400"/>
+            <div className="w-24 h-24 rounded-3xl overflow-hidden bg-[#0b0b12] border border-indigo-500/20 flex items-center justify-center mb-6 shadow-xl shadow-indigo-500/10">
+              <img src={`${import.meta.env.BASE_URL}images/logo.png`} alt="CortexFlow" className="w-full h-full object-contain p-1"/>
             </div>
             <h2 className="text-2xl font-bold text-white mb-2">CortexFlow</h2>
             <p className="text-slate-500 text-sm max-w-xs leading-relaxed mb-2">
@@ -897,8 +897,8 @@ const App: React.FC = () => {
           >
             <div className="flex items-center justify-between p-5 border-b border-slate-800/50">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                  <Bot size={20} className="text-white"/>
+                <div className="w-9 h-9 rounded-xl overflow-hidden bg-[#0b0b12] flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                  <img src={`${import.meta.env.BASE_URL}images/logo.png`} alt="CortexFlow" className="w-full h-full object-contain"/>
                 </div>
                 <div>
                   <h1 className="font-bold text-white text-base leading-none">CortexFlow</h1>
@@ -975,8 +975,8 @@ const App: React.FC = () => {
             ☰
           </button>
           <div className="flex items-center gap-2 flex-1">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center">
-              <Bot size={15} className="text-white"/>
+            <div className="w-7 h-7 rounded-lg overflow-hidden bg-[#0b0b12] flex items-center justify-center">
+              <img src={`${import.meta.env.BASE_URL}images/logo.png`} alt="CortexFlow" className="w-full h-full object-contain"/>
             </div>
             <span className="font-bold text-white text-sm">CortexFlow</span>
             {isAgentBusy && agentActivity && (
