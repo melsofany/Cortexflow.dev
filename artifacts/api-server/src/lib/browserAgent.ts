@@ -10,6 +10,7 @@ class BrowserAgent extends EventEmitter {
   private streamInterval: ReturnType<typeof setInterval> | null = null;
   private initialized = false;
   private currentUrl = "";
+  private capturing = false;
 
   async initialize(): Promise<boolean> {
     if (this.initialized) return true;
@@ -51,13 +52,16 @@ class BrowserAgent extends EventEmitter {
   }
 
   private async captureAndEmit() {
-    if (!this.page || !this.initialized) return;
+    if (!this.page || !this.initialized || this.capturing) return;
+    this.capturing = true;
     try {
       const screenshot = await this.page.screenshot({ type: "jpeg", quality: 60 });
       const base64 = screenshot.toString("base64");
       const url = this.currentUrl || await this.page.url().catch(() => "");
       this.emit("screenshot", { image: base64, url });
-    } catch { }
+    } catch { } finally {
+      this.capturing = false;
+    }
   }
 
   async captureNow(): Promise<void> {
@@ -68,7 +72,6 @@ class BrowserAgent extends EventEmitter {
     if (!this.page) return;
     await this.page.mouse.move(x, y);
     await this.page.mouse.down();
-    await this.page.waitForTimeout(40);
     await this.page.mouse.up();
     await this.captureAndEmit();
   }

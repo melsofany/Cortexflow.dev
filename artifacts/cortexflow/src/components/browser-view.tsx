@@ -97,14 +97,6 @@ export function BrowserView() {
     setIsMouseDown(false);
     const coords = toBrowserCoords(e);
     socket.emit('userMouseUp', coords);
-    socket.emit('userMouseClick', coords);
-  }, [socket, manualMode, captchaMode, toBrowserCoords]);
-
-  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!socket || !(manualMode || captchaMode)) return;
-    e.preventDefault();
-    const coords = toBrowserCoords(e);
-    socket.emit('userMouseClick', coords);
   }, [socket, manualMode, captchaMode, toBrowserCoords]);
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -263,7 +255,6 @@ export function BrowserView() {
             onMouseMove={handleMouseMove}
             onMouseDown={handleMouseDown}
             onMouseUp={handleMouseUp}
-            onClick={handleClick}
             onWheel={handleWheel}
             onContextMenu={e => e.preventDefault()}
           />
