@@ -7,6 +7,7 @@ import { selectBestModel, formatModelSelection, modelSelector, classifyTask } fr
 import { plannerAgent, TaskPlan } from "./planner.js";
 import { memorySystem } from "./memory.js";
 import { multiAgentOrchestrator } from "./multiAgent.js";
+import { learningEngine } from "./learningEngine.js";
 
 const MAX_ITERATIONS = 20;
 const MAX_RETRIES    = 2;
@@ -210,8 +211,9 @@ class AgentRunner extends EventEmitter {
       }
     } catch (err: any) {
       const msg = err.message || "Unknown error";
-      // Record failure for self-improvement
       memorySystem.recordFailure(task.taskId, task.description, msg, "النهج الافتراضي");
+      learningEngine.recordTaskOutcome(false);
+      try { learningEngine.learnStrategy(task.description, [`فشل: ${msg.substring(0, 80)}`], false); } catch {}
       taskStore.updateTask(task.taskId, { status: "failed", error: msg });
       this.emit("taskFail", { taskId: task.taskId, error: msg });
     } finally {
@@ -279,6 +281,13 @@ class AgentRunner extends EventEmitter {
 
     const duration = Date.now() - start;
     modelSelector.recordResult(model, category, true, duration / 1000, 0.8);
+
+    try {
+      const taskData = taskStore.getTask(taskId);
+      const actionSteps = (taskData?.steps || []).slice(0, 8).map((s: any) => `${s.step}: ${s.content.substring(0, 60)}`);
+      learningEngine.learnStrategy(task.description, actionSteps, true);
+      learningEngine.recordTaskOutcome(true);
+    } catch {}
 
     taskStore.updateTask(taskId, { status: "completed", result: finalReview });
     taskStore.addLog({ taskId, agentType: "MultiAgent", action: "task_complete", output: finalReview.substring(0, 300), durationMs: duration });
@@ -410,7 +419,11 @@ class AgentRunner extends EventEmitter {
     }
     await sleep(200);
 
-    const targetUrl = extractUrl(task.description) || task.url;
+    const targetUrl = extractUrl(task.description) || learningEngine.getLearnedUrl(task.description) || task.url;
+    const learningHint = learningEngine.buildContextHint(task.description);
+    if (learningHint) {
+      this.emitStep(taskId, "THINK", `🧠 من الذاكرة المتعلَّمة:\n${learningHint}`);
+    }
     if (useOllama) {
       const plan = await smartChat([
         { role: "system", content: SYSTEM_PROMPTS.default },
@@ -685,13 +698,14 @@ class AgentRunner extends EventEmitter {
       if (!finalResult) {
         const stuckUrl = await browserAgent.getCurrentUrl();
         finalResult = `وصل الوكيل إلى الحد الأقصى من المحاولات. الموقع الأخير: ${stuckUrl}`;
-        // Record failure for self-improvement
-        memorySystem.recordFailure(
-          taskId,
-          task.description,
-          `تعذّر إنهاء مهمة المتصفح خلال ${MAX_ITERATIONS} خطوة. الموقع الأخير: ${stuckUrl}`,
-          "تكرار نفس الصفحة دون تقدم — يجب البحث عن نهج مختلف أو طلب مساعدة المستخدم مبكراً"
-        );
+        const failReason = `تعذّر إنهاء مهمة المتصفح خلال ${MAX_ITERATIONS} خطوة. الموقع الأخير: ${stuckUrl}`;
+        memorySystem.recordFailure(taskId, task.description, failReason, "تكرار نفس الصفحة دون تقدم");
+        learningEngine.recordTaskOutcome(false);
+        try {
+          const taskData = taskStore.getTask(taskId);
+          const failSteps = (taskData?.steps || []).slice(0, 8).map((s: any) => `${s.step}: ${s.content.substring(0, 60)}`);
+          learningEngine.learnStrategy(task.description, failSteps, false);
+        } catch {}
         this.emitStep(taskId, "WARN", `⚠️ انتهت المحاولات (${MAX_ITERATIONS} خطوة). يوصى بتحديد المهمة بشكل أكثر دقة أو استخدام بيانات مختلفة.`);
       }
     }
@@ -709,6 +723,17 @@ class AgentRunner extends EventEmitter {
 
     const duration = Date.now() - start;
     modelSelector.recordResult(model, "browser", true, duration / 1000, 0.7);
+
+    // ── التعلم من نجاح المهمة ────────────────────────────────────────────
+    try {
+      const finalUrl = await browserAgent.getCurrentUrl();
+      learningEngine.learnFromSuccessfulNavigation(task.description, finalUrl);
+      const taskData = taskStore.getTask(taskId);
+      const actionSteps = (taskData?.steps || []).slice(0, 8).map((s: any) => `${s.step}: ${s.content.substring(0, 60)}`);
+      learningEngine.learnStrategy(task.description, actionSteps, true);
+      learningEngine.recordTaskOutcome(true);
+      this.emitStep(taskId, "THINK", `🧠 تعلّمت من هذه المهمة وحفظت الاستراتيجية الناجحة`);
+    } catch {}
 
     taskStore.updateTask(taskId, { status: "completed", result: verifyResult });
     taskStore.addLog({ taskId, agentType: "AgentRunner", action: "task_complete", output: verifyResult.substring(0, 300), durationMs: duration });

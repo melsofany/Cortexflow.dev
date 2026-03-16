@@ -5,6 +5,7 @@ import aiRouter from "./ai.js";
 import logsRouter from "./logs.js";
 import providersRouter from "./providers.js";
 import settingsRouter from "./settings.js";
+import learningRouter from "./learning.js";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(aiRouter);
 router.use(logsRouter);
 router.use(providersRouter);
 router.use(settingsRouter);
+router.use(learningRouter);
 
 export default router;
