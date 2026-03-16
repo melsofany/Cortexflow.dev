@@ -10,7 +10,7 @@ import {
   Zap, Play, Layers, Clock, Activity,
   ArrowLeft, ArrowRight, RotateCcw, Keyboard,
   Search, Code2, ListChecks, ChevronRight, Sparkles,
-  Network, BookOpen, FlaskConical, LayoutDashboard
+  Network, BookOpen, FlaskConical, LayoutDashboard, SquarePen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -1368,6 +1368,21 @@ const App: React.FC = () => {
               )}
             </button>
           </div>
+
+          {/* New Chat Button */}
+          <button
+            onClick={() => { setMessages([]); setCurrentPlan(null); setAgentActivity(null); }}
+            disabled={isAgentBusy}
+            title="محادثة جديدة"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border touch-manipulation
+              ${isAgentBusy
+                ? 'opacity-40 cursor-not-allowed text-slate-600 border-slate-800'
+                : 'text-indigo-300 border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 hover:border-indigo-400/50 active:scale-95'
+              }`}
+          >
+            <SquarePen size={14}/>
+            <span className="hidden sm:inline">محادثة جديدة</span>
+          </button>
 
           <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`}/>
         </header>
