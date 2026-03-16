@@ -301,13 +301,74 @@ class BrowserAgent extends EventEmitter {
       }, { selector: sel, val: optValue });
     };
 
-    // استراتيجية 1: Playwright selectOption مباشرة
+    // التحقق من أن قيمة select تغيّرت فعلاً بعد الاختيار
+    const verifySelected = async (selector: string, expectedValue: string): Promise<boolean> => {
+      try {
+        const loc = this.page!.locator(selector).first();
+        const currentVal = await loc.inputValue().catch(() => "");
+        if (!currentVal) return false;
+        // تحقق من القيمة أو النص المعروض
+        const currentText = await loc.locator(`option[value="${currentVal}"]`).textContent().catch(() => currentVal);
+        const ev = expectedValue.toLowerCase();
+        return currentVal.toLowerCase() === ev ||
+               (currentText || "").toLowerCase().includes(ev) ||
+               ev.includes((currentText || "").toLowerCase().trim());
+      } catch { return false; }
+    };
+
+    // اختيار بالكيبورد: ضغط مفاتيح لاختيار القيمة المطلوبة
+    const tryKeyboard = async (selector: string): Promise<boolean> => {
+      try {
+        const loc = this.page!.locator(selector).first();
+        await loc.waitFor({ state: "visible", timeout: 3000 });
+        await loc.click();
+        await this.page!.waitForTimeout(200);
+        // ضغط الحرف الأول من القيمة للقفز إليها
+        const firstChar = value[0]?.toLowerCase() || "";
+        if (firstChar) {
+          await loc.press(firstChar);
+          await this.page!.waitForTimeout(100);
+        }
+        // انتقل بالأسهم لإيجاد الخيار الصحيح (حتى 50 مرة)
+        for (let i = 0; i < 50; i++) {
+          const cur = await loc.inputValue().catch(() => "");
+          const curText = await loc.locator(`option[value="${cur}"]`).textContent().catch(() => cur);
+          const ev = value.toLowerCase();
+          if (cur.toLowerCase() === ev || (curText || "").toLowerCase().includes(ev) || ev.includes((curText || "").toLowerCase().trim())) {
+            // تأكيد الاختيار بـ Enter
+            await loc.press("Enter");
+            await this.page!.waitForTimeout(100);
+            return true;
+          }
+          await loc.press("ArrowDown");
+          await this.page!.waitForTimeout(50);
+        }
+        // جرّب أيضاً من البداية بالضغط إلى الأعلى
+        for (let i = 0; i < 50; i++) {
+          const cur = await loc.inputValue().catch(() => "");
+          const curText = await loc.locator(`option[value="${cur}"]`).textContent().catch(() => cur);
+          const ev = value.toLowerCase();
+          if (cur.toLowerCase() === ev || (curText || "").toLowerCase().includes(ev) || ev.includes((curText || "").toLowerCase().trim())) {
+            await loc.press("Enter");
+            return true;
+          }
+          await loc.press("ArrowUp");
+          await this.page!.waitForTimeout(50);
+        }
+        return false;
+      } catch { return false; }
+    };
+
+    // استراتيجية 1: Playwright selectOption مع تحقق
     const tryPlaywright = async (selector: string): Promise<boolean> => {
       try {
         const loc = this.page!.locator(selector).first();
         await loc.waitFor({ state: "attached", timeout: 3000 });
-        try { await loc.selectOption({ label: value },   { timeout: 2000 }); return true; } catch {}
-        try { await loc.selectOption({ value: value },   { timeout: 2000 }); return true; } catch {}
+        // محاولة selectOption بالتسمية أو القيمة
+        try { await loc.selectOption({ label: value },   { timeout: 2000 }); } catch {}
+        if (await verifySelected(selector, value)) return true;
+        try { await loc.selectOption({ value: value },   { timeout: 2000 }); } catch {}
+        if (await verifySelected(selector, value)) return true;
         // بحث بمطابقة جزئية في النص
         const opts = await loc.locator("option").all();
         for (const o of opts) {
@@ -315,15 +376,15 @@ class BrowserAgent extends EventEmitter {
           const val = await o.getAttribute("value") || "";
           if (txt.includes(value) || value.includes(txt) ||
               val === value || val.toLowerCase() === value.toLowerCase()) {
-            try { await loc.selectOption({ value: val }, { timeout: 2000 }); return true; } catch {}
+            try { await loc.selectOption({ value: val }, { timeout: 2000 }); } catch {}
+            if (await verifySelected(selector, value)) return true;
             // React-safe fallback
-            try {
-              await reactSet(selector, val);
-              return true;
-            } catch {}
+            try { await reactSet(selector, val); } catch {}
+            if (await verifySelected(selector, value)) return true;
           }
         }
-        return false;
+        // إذا فشلت كل المحاولات، جرّب الكيبورد
+        return tryKeyboard(selector);
       } catch { return false; }
     };
 
@@ -391,6 +452,39 @@ class BrowserAgent extends EventEmitter {
         return false;
       }, { hint, value });
       if (found) return true;
+    } catch {}
+
+    // استراتيجية 2b: نفس البحث بالسياق لكن بالكيبورد بدلاً من JS (أكثر موثوقية مع React)
+    try {
+      const selectors = await this.page.evaluate(({ hint }) => {
+        const h = hint.toLowerCase();
+        const getCtx = (sel: HTMLSelectElement) => {
+          const parts: string[] = [];
+          const name = (sel.name || sel.id || sel.getAttribute("aria-label") || "").toLowerCase();
+          parts.push(name);
+          // نص الخيار الأول
+          const first = sel.options[0]?.text?.toLowerCase() || "";
+          parts.push(first);
+          const parent = sel.closest("label") || sel.parentElement;
+          if (parent) parts.push((parent.textContent || "").toLowerCase().slice(0, 100));
+          const prev = sel.previousElementSibling;
+          if (prev) parts.push((prev.textContent || "").toLowerCase().slice(0, 60));
+          return parts.join(" ");
+        };
+        const results: string[] = [];
+        for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
+          const ctx = getCtx(sel);
+          if (!ctx.includes(h)) continue;
+          // بناء selector بناءً على name أو id
+          if (sel.name) results.push(`select[name="${sel.name}"]`);
+          else if (sel.id) results.push(`select#${sel.id}`);
+        }
+        return results;
+      }, { hint });
+
+      for (const sel of selectors) {
+        if (await tryKeyboard(sel)) return true;
+      }
     } catch {}
 
     // استراتيجية 3: آخر محاولة — أول select في الصفحة يطابق القيمة
