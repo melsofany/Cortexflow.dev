@@ -716,7 +716,7 @@ async def deepseek_chat(
     max_tokens: int = 1000,
     temperature: float = 0.3,
 ) -> str:
-    """استدعاء DeepSeek كمساعد احتياطي"""
+    """استدعاء DeepSeek"""
     if not DEEPSEEK_KEY:
         return ""
     try:
@@ -737,11 +737,29 @@ async def deepseek_chat(
             )
             result = r.json()
             content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            print(f"[DeepSeek Fallback] استُخدم بنجاح ({len(content)} حرف)")
+            print(f"[DeepSeek] استُخدم ({len(content)} حرف)")
             return content
     except Exception as e:
-        print(f"[DeepSeek Fallback] فشل: {e}")
+        print(f"[DeepSeek] فشل: {e}")
         return ""
+
+
+async def deepseek_first_chat(
+    messages: list[dict],
+    max_tokens: int = 1000,
+    temperature: float = 0.3,
+    step_name: str = "",
+) -> tuple[str, str]:
+    """استدعاء DeepSeek أولاً (للمهام المعقدة كالمتصفح)، ثم Ollama احتياطاً"""
+    if DEEPSEEK_KEY:
+        ds_resp = await deepseek_chat(messages, max_tokens, temperature)
+        if ds_resp and len(ds_resp.strip()) > 5:
+            return ds_resp, "deepseek"
+
+    available = await get_available_models()
+    fallback_model = available[0] if available else "qwen2:0.5b"
+    ollama_resp = await ollama_chat(fallback_model, messages, max_tokens, temperature)
+    return ollama_resp or "جاري المعالجة...", "ollama"
 
 
 async def smart_chat(
@@ -931,22 +949,30 @@ async def ooda_agent(task: str, model: str, category: str, max_iterations: int =
 
     # ══ المسار المعقد: للمهام التي تحتاج أدوات وتخطيط ══
     else:
+        # للمهام المعقدة (خاصةً المتصفح): استخدم DeepSeek مباشرةً كأول خيار
+        use_deepseek_first = (category == "browser") and bool(DEEPSEEK_KEY)
+        chat_fn = deepseek_first_chat if use_deepseek_first else (
+            lambda msgs, max_tokens=800, temperature=0.3, step_name="": smart_chat(model, msgs, max_tokens, temperature, step_name)
+        )
+
         messages = [{"role": "system", "content": MASTER_SYSTEM_PROMPT}]
 
         # Observe
         if category == "browser":
             observe_prompt = (
                 f"المهمة: {task}\n\n"
-                "هذه مهمة تصفح ويب. خطط للتنفيذ باستخدام الأدوات المتاحة:\n"
-                "- browser_analyze_selects: لتحليل القوائم المنسدلة في الصفحة أولاً\n"
-                "- browser_select: لتعبئة القوائم المنسدلة (اليوم/الشهر/السنة) كل واحدة بشكل مستقل\n"
-                "- execute_code: لتنفيذ كود Selenium متقدم إذا لزم\n"
-                "تذكر: القوائم المنسدلة يجب استهدافها بـ nth (0=الأولى, 1=الثانية...) وليس بمحدد عام."
+                "⚠️ تعليمات مهمة لمهام المتصفح:\n"
+                "1. لا تفترض أي حقول أو قوائم منسدلة قبل تحليل الصفحة الفعلية\n"
+                "2. ابدأ دائماً بالتنقل إلى الرابط المطلوب\n"
+                "3. استخدم browser_analyze_selects لرؤية ما هو موجود فعلاً في الصفحة قبل أي fill أو select\n"
+                "4. فقط اعمل على الحقول التي تأكدت من وجودها في نتيجة التحليل\n"
+                "5. القوائم المنسدلة: استهدفها بـ nth (0=الأولى, 1=الثانية...) بعد التحليل\n"
+                f"\nالأدوات المتاحة: {', '.join(TOOLS.keys())}"
             )
         else:
             observe_prompt = f"المهمة: {task}\n\nحلّل ما المطلوب وهل تحتاج أداة من: {', '.join(TOOLS.keys())}"
         messages.append({"role": "user", "content": observe_prompt})
-        observation, obs_src = await smart_chat(model, messages, max_tokens=300, step_name="OBSERVE")
+        observation, obs_src = await chat_fn(messages, max_tokens=400, step_name="OBSERVE")
         messages.append({"role": "assistant", "content": observation})
         src_tag = " [🤖DS]" if obs_src == "deepseek" else ""
         steps.append(f"[OBSERVE]{src_tag} {observation}")
@@ -964,11 +990,11 @@ async def ooda_agent(task: str, model: str, category: str, max_iterations: int =
                 act_prompt = "أكمل التنفيذ أو أعطِ:\nRESULT: <الإجابة الكاملة>"
 
             messages.append({"role": "user", "content": act_prompt})
-            response, act_src = await smart_chat(
-                model, messages, max_tokens=800, temperature=0.2, step_name=f"ACT-{i+1}"
+            response, act_src = await chat_fn(
+                messages, max_tokens=900, temperature=0.2, step_name=f"ACT-{i+1}"
             )
             if act_src == "deepseek":
-                steps.append(f"[ACT:DS] استُعين بـ DeepSeek")
+                steps.append(f"[ACT:DS] DeepSeek يُنفذ")
             messages.append({"role": "assistant", "content": response})
 
             # أداة؟
