@@ -312,13 +312,6 @@ class BrowserAgent extends EventEmitter {
       }
     }
 
-    // 7. احتياطي شامل: إذا فشلت كل المحاولات، اضغط Enter
-    try {
-      await this.page.keyboard.press("Enter");
-      await this.page.waitForTimeout(1200);
-      return true;
-    } catch { }
-
     return false;
   }
 
@@ -907,8 +900,8 @@ class BrowserAgent extends EventEmitter {
           if (count > maxInputs) { maxInputs = count; bestFrame = frame; }
         } catch {}
       }
-      if (frames.length > 1) {
-        console.log(`[getPageStructure] frames: ${frames.length}, using frame with ${maxInputs} inputs: ${bestFrame.url()}`);
+      if (frames.length > 1 && bestFrame !== this.page.mainFrame()) {
+        console.log(`[getPageStructure] frames: ${frames.length}, switched to iframe with ${maxInputs} inputs: ${bestFrame.url()}`);
       }
 
       const data = await bestFrame.evaluate(() => {
@@ -1070,7 +1063,7 @@ class BrowserAgent extends EventEmitter {
     } catch { return []; }
   }
 
-  // ── قائمة شاملة بكل العناصر التفاعلية مع selectors فريدة ─────────────
+  // ── قائمة شاملة بكل العناصر التفاعلية مع selectors فريدة — يبحث في كل الإطارات ──
   async getInteractiveElements(): Promise<Array<{
     idx: number;
     tag: string;
@@ -1083,64 +1076,111 @@ class BrowserAgent extends EventEmitter {
     selector: string;
     inForm: boolean;
     isSubmit: boolean;
+    frameUrl?: string;
   }>> {
     if (!this.page) return [];
-    try {
-      return await this.page.evaluate(() => {
-        const elems: NodeListOf<Element> = document.querySelectorAll(
-          'button, [role="button"], input[type="submit"], input[type="button"], a[href], [onclick], [tabindex]:not([tabindex="-1"])'
-        );
-        const result: any[] = [];
-        let idx = 0;
-        for (const el of Array.from(elems).slice(0, 60)) {
-          const e = el as HTMLElement;
-          const rect = e.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) continue;
-          const tag = e.tagName.toLowerCase();
-          const text = (e.textContent || "").trim().slice(0, 80).replace(/\s+/g, " ");
-          const id = e.id || "";
-          const name = (e as any).name || "";
-          const type = (e as any).type || "";
-          const ariaLabel = e.getAttribute("aria-label") || e.getAttribute("aria-labelledby") || "";
-          const href = (e as any).href || "";
-          const inForm = !!e.closest("form");
-          const isSubmit = type === "submit" || e.getAttribute("data-testid")?.includes("submit") || false;
 
-          // بناء selector فريد
-          let selector = tag;
-          if (id) {
-            selector = `#${CSS.escape(id)}`;
-          } else if (name) {
-            selector = `${tag}[name="${name}"]`;
-          } else {
-            // استخدم nth-of-type
-            selector = `${tag}:nth-of-type(${idx + 1})`;
+    const evalFrame = async (frame: import("playwright").Frame, frameUrl: string): Promise<any[]> => {
+      try {
+        return await frame.evaluate((fUrl: string) => {
+          const elems = Array.from(document.querySelectorAll<Element>(
+            'button, [role="button"], input[type="submit"], input[type="button"], a[href], [onclick], [tabindex]:not([tabindex="-1"])'
+          ));
+          const result: any[] = [];
+          let idx = 0;
+          for (const el of elems.slice(0, 50)) {
+            const e = el as HTMLElement;
+            const rect = e.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) continue;
+            const tag = e.tagName.toLowerCase();
+            const text = (e.textContent || "").trim().slice(0, 80).replace(/\s+/g, " ");
+            const id = e.id || "";
+            const name = (e as any).name || "";
+            const type = (e as any).type || "";
+            const ariaLabel = e.getAttribute("aria-label") || e.getAttribute("aria-labelledby") || "";
+            const dataTestId = e.getAttribute("data-testid") || "";
+            const href = (e as any).href || "";
+            const inForm = !!e.closest("form");
+            const isSubmit = type === "submit" || dataTestId.includes("submit") || false;
+
+            // بناء selector فريد — أكثر موثوقية
+            let selector = tag;
+            if (id) {
+              selector = `#${CSS.escape(id)}`;
+            } else if (dataTestId) {
+              selector = `[data-testid="${dataTestId}"]`;
+            } else if (ariaLabel) {
+              selector = `${tag}[aria-label="${ariaLabel}"]`;
+            } else if (name) {
+              selector = `${tag}[name="${name}"]`;
+            } else if (type === "submit") {
+              selector = `${tag}[type="submit"]`;
+            } else if (type) {
+              selector = `${tag}[type="${type}"]`;
+            } else {
+              // آخر خيار: nth-child (أكثر موثوقية من nth-of-type)
+              const parent = e.parentElement;
+              if (parent) {
+                const siblings = Array.from(parent.children);
+                const nth = siblings.indexOf(e) + 1;
+                const parentId = parent.id ? `#${CSS.escape(parent.id)} ` : "";
+                selector = `${parentId}${tag}:nth-child(${nth})`;
+              } else {
+                selector = `${tag}:nth-of-type(${idx + 1})`;
+              }
+            }
+
+            result.push({ idx, tag, text, id, name, type, ariaLabel, href, selector, inForm, isSubmit, frameUrl: fUrl });
+            idx++;
           }
+          return result;
+        }, frameUrl);
+      } catch { return []; }
+    };
 
-          result.push({ idx, tag, text, id, name, type, ariaLabel, href, selector, inForm, isSubmit });
-          idx++;
-        }
-        return result;
-      });
-    } catch { return []; }
+    const allFrames = this.page.frames();
+    const allElements: any[] = [];
+    let globalIdx = 0;
+
+    for (const frame of allFrames) {
+      const frameElems = await evalFrame(frame, frame.url());
+      for (const el of frameElems) {
+        el.idx = globalIdx++;
+        allElements.push(el);
+      }
+    }
+
+    return allElements;
   }
 
-  // ── نقر بـ selector مخصص مع احتياطيات ─────────────────────────────────
-  async clickByAnySelector(selectors: string[]): Promise<boolean> {
+  // ── نقر بـ selector مخصص مع احتياطيات — يبحث في كل الإطارات ──────────
+  async clickByAnySelector(selectors: string[], targetFrameUrl?: string): Promise<boolean> {
     if (!this.page) return false;
+
+    // ابنِ قائمة الإطارات — ابدأ بالإطار المستهدف إذا تم تحديده
+    const allFrames = this.page.frames();
+    const orderedFrames = targetFrameUrl
+      ? [
+          ...allFrames.filter(f => f.url() === targetFrameUrl),
+          ...allFrames.filter(f => f.url() !== targetFrameUrl),
+        ]
+      : allFrames;
+
     for (const sel of selectors) {
-      try {
-        const loc = this.page.locator(sel).first();
-        await loc.waitFor({ state: "visible", timeout: 2000 });
-        await loc.click({ timeout: 3000 });
-        await this.page.waitForTimeout(1200);
-        return true;
-      } catch { }
+      for (const frame of orderedFrames) {
+        try {
+          const loc = frame.locator(sel).first();
+          await loc.waitFor({ state: "visible", timeout: 2000 });
+          await loc.click({ timeout: 3000 });
+          await this.page.waitForTimeout(1200);
+          return true;
+        } catch { }
+      }
     }
     return false;
   }
 
-  // ── نقر بمساعدة الذكاء الاصطناعي — يُرسل قائمة العناصر ويختار الصحيح ──
+  // ── نقر بمساعدة الذكاء الاصطناعي — يُرسل قائمة العناصر من كل الإطارات ويختار الصحيح ──
   async aiAssistedClick(
     target: string,
     askAI: (prompt: string) => Promise<string>,
@@ -1152,19 +1192,19 @@ class BrowserAgent extends EventEmitter {
 
     const elemsList = elements
       .map(e =>
-        `[${e.idx}] tag=${e.tag} text="${e.text}" aria="${e.ariaLabel}" id="${e.id}" name="${e.name}" type="${e.type}" sel="${e.selector}" inForm=${e.inForm} isSubmit=${e.isSubmit}`
+        `[${e.idx}] tag=${e.tag} text="${e.text}" aria="${e.ariaLabel}" id="${e.id}" name="${e.name}" type="${e.type}" sel="${e.selector}" inForm=${e.inForm} isSubmit=${e.isSubmit}${e.frameUrl && e.frameUrl !== "about:blank" ? ` frame="${e.frameUrl}"` : ""}`
       )
       .join("\n");
 
-    const prompt = `قائمة كل العناصر التفاعلية المرئية في الصفحة:
+    const prompt = `قائمة كل العناصر التفاعلية المرئية في الصفحة (من كل الإطارات):
 ${elemsList}
 
 المطلوب: النقر على العنصر الذي يتوافق مع: "${target}"
 
 أجب بـ JSON واحد فقط بلا أي نص إضافي:
-{ "selector": "CSS_SELECTOR", "reason": "سبب الاختيار" }
+{ "selector": "CSS_SELECTOR", "frameUrl": "URL_الإطار_أو_فارغ", "reason": "سبب الاختيار" }
 
-استخدم قيمة sel= من القائمة مباشرة. اختر العنصر الأنسب.`;
+استخدم قيمة sel= من القائمة مباشرة، وضع frameUrl من حقل frame= إن وجد. اختر العنصر الأنسب.`;
 
     try {
       const aiResp = await askAI(prompt);
@@ -1172,10 +1212,11 @@ ${elemsList}
       if (!jsonMatch) return { success: false };
       const parsed = JSON.parse(jsonMatch[0]);
       const selector: string = parsed.selector || "";
+      const frameUrl: string = parsed.frameUrl || "";
       if (!selector) return { success: false };
 
-      console.log(`[aiAssistedClick] AI اختار: "${selector}" لـ "${target}" — السبب: ${parsed.reason || "—"}`);
-      const clicked = await this.clickByAnySelector([selector]);
+      console.log(`[aiAssistedClick] AI اختار: "${selector}" frame="${frameUrl}" لـ "${target}" — السبب: ${parsed.reason || "—"}`);
+      const clicked = await this.clickByAnySelector([selector], frameUrl || undefined);
       return { success: clicked, selector };
     } catch (e: any) {
       console.log(`[aiAssistedClick] فشل: ${e.message}`);

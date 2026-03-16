@@ -400,6 +400,11 @@ class AgentRunner extends EventEmitter {
       content: `[${step}] ${content}`,
       timestamp: new Date(),
     });
+    // تسجيل الخطوات الهامة في console لتظهر في سجلات Render
+    const logSteps = ["ACT", "WARN", "ERR", "THINK", "VERIFY", "ASK"];
+    if (logSteps.includes(step)) {
+      console.log(`[${step}] ${content.substring(0, 200)}`);
+    }
     taskStore.addStep(taskId, step, content);
     taskStore.addLog({
       taskId,
@@ -1345,23 +1350,33 @@ async function executeAction(
   param: string,
 ): Promise<{ success: boolean; error?: string } | undefined> {
   switch (action) {
-    case "navigate":
+    case "navigate": {
+      console.log(`[ACT] navigate → ${param}`);
       await browserAgent.navigate(param);
       await browserAgent.captureNow();
+      const newUrl = await browserAgent.getCurrentUrl();
+      console.log(`[ACT] navigate ✅ وصل إلى: ${newUrl}`);
       return { success: true };
+    }
     case "click": {
       // دعم النقر المباشر بـ CSS selector: click PARAM: sel:CSS_SELECTOR
       if (param.startsWith("sel:")) {
         const cssSelector = param.slice(4).trim();
+        console.log(`[ACT] click[sel] → "${cssSelector}"`);
         const clickedSel = await browserAgent.clickByAnySelector([cssSelector]);
-        if (!clickedSel) return { success: false, error: `لم يُعثر على عنصر بالـ selector: "${cssSelector}"` };
+        if (!clickedSel) {
+          console.log(`[ACT] click[sel] ❌ لم يُعثر على: "${cssSelector}"`);
+          return { success: false, error: `لم يُعثر على عنصر بالـ selector: "${cssSelector}"` };
+        }
+        console.log(`[ACT] click[sel] ✅ نجح: "${cssSelector}"`);
         return { success: true };
       }
 
+      console.log(`[ACT] click[text] → "${param}"`);
       const clicked = await browserAgent.clickByText(param);
       if (!clicked) {
         // الاحتياطي الذكي: يسأل DeepSeek عن العنصر الصحيح بناءً على قائمة كل العناصر
-        console.log(`[click] فشل النقر بالنص "${param}" — تشغيل AI-assisted click...`);
+        console.log(`[ACT] click[text] ❌ فشل "${param}" — تشغيل AI-assisted click...`);
         const { success: aiClicked, selector: aiSel } = await browserAgent.aiAssistedClick(
           param,
           async (prompt) => {
@@ -1374,16 +1389,18 @@ async function executeAction(
           },
         );
         if (aiClicked) {
-          console.log(`[click] AI-assisted click نجح باستخدام: ${aiSel}`);
+          console.log(`[ACT] click[ai] ✅ نجح باستخدام: "${aiSel}"`);
           return { success: true };
         }
         // آخر احتياطي: اضغط Enter
+        console.log(`[ACT] click ❌ فشل كلياً لـ "${param}" — ضغط Enter كاحتياطي`);
         try {
           await browserAgent.pressKey("Enter");
           return { success: true };
         } catch { }
         return { success: false, error: `لم يُعثر على عنصر بالنص: "${param}" — جرّب: click PARAM: sel:CSS_SELECTOR أو key PARAM: Enter` };
       }
+      console.log(`[ACT] click[text] ✅ نجح: "${param}"`);
       return { success: true };
     }
     case "fill": {
@@ -1391,9 +1408,10 @@ async function executeAction(
       if (eqIdx === -1) return { success: false, error: `صيغة خاطئة — يجب أن تكون: اسم_الحقل=القيمة` };
       const field = param.substring(0, eqIdx).trim();
       const value = param.substring(eqIdx + 1).trim();
+      console.log(`[ACT] fill → "${field}" = "${value.slice(0, 30)}${value.length > 30 ? "..." : ""}"`);
       const filled = await browserAgent.smartFill(field, value);
       if (!filled) {
-        console.log(`[fill] لم يُعثر على الحقل: "${field}" = "${value}"`);
+        console.log(`[ACT] fill ❌ لم يُعثر على الحقل: "${field}"`);
         return { success: false, error: `لم يُعثر على الحقل "${field}" في الصفحة. راجع هيكل الصفحة لمعرفة الأسماء الصحيحة.` };
       }
       // ── ضغط Enter تلقائي بعد ملء حقل كلمة المرور ──────────────────────
@@ -1404,7 +1422,9 @@ async function executeAction(
         await browserAgent.pressKey("Enter");
         await sleep(1500);
         await browserAgent.captureNow();
-        console.log(`[fill] ✅ ضغط Enter تلقائياً بعد ملء حقل كلمة المرور`);
+        console.log(`[ACT] fill ✅ "${field}" + Enter تلقائي (حقل كلمة المرور)`);
+      } else {
+        console.log(`[ACT] fill ✅ "${field}"`);
       }
       return { success: true };
     }
@@ -1414,23 +1434,29 @@ async function executeAction(
       // لا تحذف nth:N — فقط نظّف المسافات الزائدة
       const selField = param.substring(0, eqIdx2).trim();
       const selValue = param.substring(eqIdx2 + 1).trim();
+      console.log(`[ACT] select → "${selField}" = "${selValue}"`);
       const selected = await browserAgent.smartSelect(selField, selValue);
       if (!selected) {
-        console.log(`[select] لم يُعثر على القائمة: "${selField}" = "${selValue}"`);
+        console.log(`[ACT] select ❌ لم يُعثر على: "${selField}" = "${selValue}"`);
         return { success: false, error: `لم يُعثر على القائمة "${selField}" أو الخيار "${selValue}".` };
       }
+      console.log(`[ACT] select ✅ "${selField}" = "${selValue}"`);
       return { success: true };
     }
     case "type":
+      console.log(`[ACT] type → "${param.slice(0, 50)}"`);
       await browserAgent.type(param);
       return { success: true };
     case "key":
+      console.log(`[ACT] key → "${param}"`);
       await browserAgent.pressKey(param);
       return { success: true };
     case "scroll":
+      console.log(`[ACT] scroll → "${param}"`);
       await browserAgent.scroll(0, param === "up" ? -400 : 400);
       return { success: true };
     case "wait":
+      console.log(`[ACT] wait → 2s`);
       await sleep(2000);
       return { success: true };
     default:

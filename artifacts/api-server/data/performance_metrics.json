@@ -1,6 +1,90 @@
 {
   "snapshots": [
     {
+      "timestamp": "2026-03-16T20:51:23.213Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1421,
+          "unit": "ms",
+          "timestamp": "2026-03-16T20:51:23.201Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T20:51:23.202Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T20:51:23.213Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-16T20:51:23.213Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-16T20:51:23.213Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
+      "timestamp": "2026-03-16T20:46:24.030Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 2233,
+          "unit": "ms",
+          "timestamp": "2026-03-16T20:46:24.012Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T20:46:24.013Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T20:46:24.030Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-16T20:46:24.030Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-16T20:46:24.030Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
       "timestamp": "2026-03-16T20:41:23.151Z",
       "metrics": [
         {
@@ -4037,62 +4121,6 @@
       ],
       "issues": [],
       "score": 100
-    },
-    {
-      "timestamp": "2026-03-16T08:16:28.797Z",
-      "metrics": [
-        {
-          "name": "deepseek_latency_ms",
-          "value": 2094,
-          "unit": "ms",
-          "timestamp": "2026-03-16T08:16:28.785Z",
-          "status": "healthy"
-        },
-        {
-          "name": "ollama_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T08:16:28.786Z",
-          "status": "healthy"
-        },
-        {
-          "name": "agent_service_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T08:16:28.797Z",
-          "status": "healthy"
-        }
-      ],
-      "issues": [],
-      "score": 100
-    },
-    {
-      "timestamp": "2026-03-16T08:15:26.863Z",
-      "metrics": [
-        {
-          "name": "deepseek_latency_ms",
-          "value": 1803,
-          "unit": "ms",
-          "timestamp": "2026-03-16T08:15:26.844Z",
-          "status": "healthy"
-        },
-        {
-          "name": "ollama_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T08:15:26.846Z",
-          "status": "healthy"
-        },
-        {
-          "name": "agent_service_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T08:15:26.863Z",
-          "status": "healthy"
-        }
-      ],
-      "issues": [],
-      "score": 100
     }
   ],
   "taskStats": {
@@ -4107,7 +4135,7 @@
     "browser": true,
     "agentService": true
   },
-  "lastCheck": "2026-03-16T20:41:23.151Z",
+  "lastCheck": "2026-03-16T20:51:23.213Z",
   "alerts": [
     {
       "level": "warn",
