@@ -285,31 +285,73 @@ class BrowserAgent extends EventEmitter {
   async smartSelect(hint: string, value: string): Promise<boolean> {
     if (!this.page) return false;
 
-    // دالة React-safe للضغط على القيمة في عنصر select
-    const reactSet = async (sel: any, optValue: string): Promise<void> => {
+    // دالة React-safe متقدمة: تضبط القيمة عبر React Fiber مباشرةً
+    const reactSet = async (sel: string, optValue: string): Promise<void> => {
       await this.page!.evaluate(({ selector, val }) => {
         const el = document.querySelector<HTMLSelectElement>(selector);
         if (!el) return;
-        // Native setter لإطلاق React synthetic events
+
+        // الخطوة 1: ضبط القيمة باستخدام native setter
         const nativeSetter = Object.getOwnPropertyDescriptor(
           window.HTMLSelectElement.prototype, "value"
         )?.set;
         if (nativeSetter) nativeSetter.call(el, val);
         else el.value = val;
+
+        // الخطوة 2: إطلاق أحداث DOM الأصيلة
         el.dispatchEvent(new Event("input",  { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
+
+        // الخطوة 3: React Fiber — استدعاء onChange مباشرةً
+        try {
+          const fiberKey = Object.keys(el).find(k =>
+            k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance")
+          );
+          if (fiberKey) {
+            let fiber = (el as any)[fiberKey];
+            while (fiber) {
+              const props = fiber.memoizedProps || fiber.pendingProps;
+              if (props?.onChange && typeof props.onChange === "function") {
+                // بناء حدث اصطناعي يحاكي React SyntheticEvent
+                const fakeEvent = {
+                  target: el,
+                  currentTarget: el,
+                  nativeEvent: new Event("change", { bubbles: true }),
+                  bubbles: true,
+                  preventDefault: () => {},
+                  stopPropagation: () => {},
+                  isPersistent: () => true,
+                  persist: () => {},
+                };
+                props.onChange(fakeEvent);
+                break;
+              }
+              fiber = fiber.return;
+            }
+          }
+        } catch (_) { /* React Fiber غير متاح */ }
+
+        // الخطوة 4: InputEvent بدلاً من Event (لـ React 18+)
+        try {
+          el.dispatchEvent(new InputEvent("input",  { bubbles: true, data: val }));
+          el.dispatchEvent(new InputEvent("change", { bubbles: true }));
+        } catch (_) {}
       }, { selector: sel, val: optValue });
     };
 
-    // التحقق من أن قيمة select تغيّرت فعلاً بعد الاختيار
+    // التحقق من أن قيمة select تغيّرت فعلاً بعد الاختيار (مع انتظار render React)
     const verifySelected = async (selector: string, expectedValue: string): Promise<boolean> => {
       try {
+        // انتظر React لإعادة الرسم
+        await this.page!.waitForTimeout(150);
         const loc = this.page!.locator(selector).first();
         const currentVal = await loc.inputValue().catch(() => "");
-        if (!currentVal) return false;
         // تحقق من القيمة أو النص المعروض
-        const currentText = await loc.locator(`option[value="${currentVal}"]`).textContent().catch(() => currentVal);
+        const currentText = currentVal
+          ? await loc.locator(`option[value="${currentVal}"]`).textContent().catch(() => currentVal)
+          : "";
         const ev = expectedValue.toLowerCase();
+        if (!currentVal && !currentText) return false;
         return currentVal.toLowerCase() === ev ||
                (currentText || "").toLowerCase().includes(ev) ||
                ev.includes((currentText || "").toLowerCase().trim());
@@ -359,31 +401,46 @@ class BrowserAgent extends EventEmitter {
       } catch { return false; }
     };
 
-    // استراتيجية 1: Playwright selectOption مع تحقق
+    // استراتيجية 1: selectOption + reactSet (React Fiber) + keyboard
     const tryPlaywright = async (selector: string): Promise<boolean> => {
       try {
         const loc = this.page!.locator(selector).first();
         await loc.waitFor({ state: "attached", timeout: 3000 });
-        // محاولة selectOption بالتسمية أو القيمة
-        try { await loc.selectOption({ label: value },   { timeout: 2000 }); } catch {}
-        if (await verifySelected(selector, value)) return true;
-        try { await loc.selectOption({ value: value },   { timeout: 2000 }); } catch {}
-        if (await verifySelected(selector, value)) return true;
-        // بحث بمطابقة جزئية في النص
+
+        // --- جمع كل الخيارات أولاً ---
         const opts = await loc.locator("option").all();
+        const candidates: string[] = [];
         for (const o of opts) {
           const txt = (await o.textContent() || "").trim();
-          const val = await o.getAttribute("value") || "";
-          if (txt.includes(value) || value.includes(txt) ||
-              val === value || val.toLowerCase() === value.toLowerCase()) {
-            try { await loc.selectOption({ value: val }, { timeout: 2000 }); } catch {}
-            if (await verifySelected(selector, value)) return true;
-            // React-safe fallback
-            try { await reactSet(selector, val); } catch {}
-            if (await verifySelected(selector, value)) return true;
+          const val = (await o.getAttribute("value") || "").trim();
+          if (txt.includes(value) || value.includes(txt.toLowerCase()) ||
+              val === value || val.toLowerCase() === value.toLowerCase() ||
+              txt.toLowerCase() === value.toLowerCase()) {
+            if (val) candidates.push(val);
           }
         }
-        // إذا فشلت كل المحاولات، جرّب الكيبورد
+        // إضافة القيمة الأصلية للمحاولات
+        if (!candidates.includes(value)) candidates.unshift(value);
+
+        for (const candidate of candidates) {
+          // محاولة 1: Playwright selectOption بالقيمة
+          try { await loc.selectOption({ value: candidate }, { timeout: 1500 }); } catch {}
+          if (await verifySelected(selector, value)) return true;
+
+          // محاولة 2: Playwright selectOption بالتسمية
+          try { await loc.selectOption({ label: candidate }, { timeout: 1500 }); } catch {}
+          if (await verifySelected(selector, value)) return true;
+
+          // محاولة 3: React Fiber - استدعاء onChange مباشرة
+          try { await reactSet(selector, candidate); } catch {}
+          if (await verifySelected(selector, value)) return true;
+        }
+
+        // محاولة 4: Playwright selectOption بالتسمية للقيمة الأصلية
+        try { await loc.selectOption({ label: value }, { timeout: 1500 }); } catch {}
+        if (await verifySelected(selector, value)) return true;
+
+        // محاولة 5: اختيار بالكيبورد
         return tryKeyboard(selector);
       } catch { return false; }
     };
