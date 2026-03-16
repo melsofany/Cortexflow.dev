@@ -128,10 +128,17 @@ ACTION: <الإجراء> | PARAM: <القيمة>
   * أو ظهور رسالة نجاح صريحة في الصفحة
 - إذا بقيت على نفس الصفحة → يوجد خطأ لم يُصحَّح بعد
 
+━━━ قاعدة الصفحات بدون حقول إدخال ━━━
+- إذا ظهر "لا توجد حقول إدخال" في الهيكل → الصفحة محملة لكنها صفحة تنقل
+- الحل: استخدم click على زر/رابط "Log In" أو "تسجيل الدخول" أو ما يشابهه
+- أو استخدم navigate للانتقال مباشرة إلى صفحة تسجيل الدخول
+- لا تستخدم wait أكثر من مرة واحدة إذا لم تتغير الصفحة بعدها
+
 القواعد الصارمة:
 - سطر واحد فقط، لا شرح ولا تعليق
 - للقوائم [قائمة] استخدم select وليس fill أو click
-- كل أسماء الحقول والأزرار مصدرها هيكل الصفحة فقط`;
+- كل أسماء الحقول والأزرار مصدرها هيكل الصفحة فقط
+- لا تكرر نفس الإجراء 3 مرات متتالية بدون تغيير`;
 
 const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً.`;
 
@@ -439,6 +446,13 @@ class AgentRunner extends EventEmitter {
       const initStruct  = await browserAgent.getPageStructure();
       const initContent = await browserAgent.getPageContent();
       const initUrl     = await browserAgent.getCurrentUrl();
+      // Add login hint when page has no inputs but task requires login
+      const taskLower = task.description.toLowerCase();
+      const isLoginTask = taskLower.includes("دخول") || taskLower.includes("تسجيل") || taskLower.includes("login") || taskLower.includes("sign in") || taskLower.includes("بيانات");
+      const pageHasNoInputs = !initStruct.includes("[حقل]") && !initStruct.includes("[قائمة");
+      if (pageHasNoInputs && isLoginTask) {
+        this.emitStep(taskId, "WARN", `⚠️ الصفحة الحالية لا تحتوي على حقول إدخال. إذا كانت المهمة تتطلب تسجيل الدخول، يجب الانتقال إلى صفحة تسجيل الدخول أولاً.`);
+      }
       this.emitStep(taskId, "THINK", `تحليل الصفحة:\n${initStruct}`);
 
       // Build conversation context for browser task
@@ -453,7 +467,9 @@ class AgentRunner extends EventEmitter {
           role: "user",
           content: [
             `المهمة: ${task.description}${browserConvContext}`,
-            ``,
+            pageHasNoInputs && isLoginTask
+              ? `\n💡 تنبيه: الصفحة الحالية لا تحتوي على نموذج إدخال. ابدأ بالنقر على زر تسجيل الدخول أو انتقل مباشرة إلى https://www.facebook.com/login\n`
+              : "",
             `═══ تحليل الصفحة الأولية ═══`,
             `الرابط: ${initUrl}`,
             ``,
@@ -472,6 +488,8 @@ class AgentRunner extends EventEmitter {
       let consecutiveFails = 0;
       let lastStuckUrl = "";
       let sameUrlCount = 0;
+      let consecutiveWaits = 0;
+      let lastAction = "";
 
       for (let i = 1; i <= MAX_ITERATIONS; i++) {
         // في الخطوة الأولى استخدم التحليل الأولي، وبعدها اقرأ الصفحة من جديد
@@ -557,6 +575,35 @@ class AgentRunner extends EventEmitter {
         consecutiveFails = 0;
         const { action, param } = parsed;
         this.emitStep(taskId, "ACT", `خطوة ${i}: ${action} → ${param}`);
+
+        // ── كشف الإجراءات المتكررة (wait/navigate لنفس الرابط) ──────────────
+        if (action === "wait" || (action === lastAction && action !== "fill" && action !== "click")) {
+          consecutiveWaits++;
+        } else {
+          consecutiveWaits = 0;
+        }
+        lastAction = action;
+
+        if (consecutiveWaits >= 2) {
+          const freshStruct = await browserAgent.getPageStructure();
+          const hasNoInputs = freshStruct.includes("لا توجد حقول إدخال");
+          this.emitStep(taskId, "WARN", `⚠️ تكرار نفس الإجراء "${action}" (${consecutiveWaits} مرات) — تغيير النهج...`);
+          history.push({
+            role: "user",
+            content: [
+              `⚠️ لقد استخدمت "${action}" ${consecutiveWaits} مرات متتالية بدون نتيجة.`,
+              hasNoInputs
+                ? `الصفحة ليس بها حقول إدخال. يجب أن تنقر على زر "Log In" أو "تسجيل الدخول" أو تنتقل مباشرة إلى: navigate PARAM: https://www.facebook.com/login`
+                : `يجب اتخاذ إجراء مختلف تماماً بناءً على هيكل الصفحة الحالي:`,
+              ``,
+              freshStruct.substring(0, 600),
+              ``,
+              `اختر إجراءً مختلفاً الآن — لا تكرر "${action}".`,
+            ].join("\n"),
+          });
+          consecutiveWaits = 0;
+          await sleep(500);
+        }
 
         if (action === "done") {
           await sleep(1500);
@@ -872,6 +919,11 @@ function extractUrl(text: string): string | null {
     "واتساب": "https://web.whatsapp.com", "whatsapp": "https://web.whatsapp.com",
     "ويكيبيديا": "https://ar.wikipedia.org", "wikipedia": "https://en.wikipedia.org",
     "ستاك اوفرفلو": "https://stackoverflow.com", "stackoverflow": "https://stackoverflow.com",
+    "ميتا للمطورين": "https://developers.facebook.com/", "meta developer": "https://developers.facebook.com/",
+    "meta for developers": "https://developers.facebook.com/", "developers.facebook": "https://developers.facebook.com/",
+    "ميتا مطورين": "https://developers.facebook.com/", "موقع ميتا الخاص بالمطورين": "https://developers.facebook.com/",
+    "whatsapp cloud api": "https://developers.facebook.com/docs/whatsapp/cloud-api/",
+    "whatsapp business": "https://business.whatsapp.com/", "واتساب بيزنس": "https://business.whatsapp.com/",
   };
   const lower = text.toLowerCase();
   for (const [key, url] of Object.entries(siteMap)) {

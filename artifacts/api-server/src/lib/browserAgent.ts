@@ -745,8 +745,15 @@ class BrowserAgent extends EventEmitter {
       lines.push(`الصفحة: ${data.title}`);
       lines.push(`URL: ${data.url}`);
 
-      if (data.inputs.length > 0) {
+      if (data.inputs.length === 0) {
+        lines.push("\n⚠️ لا توجد حقول إدخال مرئية في هذه الصفحة.");
+        lines.push("الصفحة محملة بالكامل. للمتابعة: انقر على زر/رابط للتنقل نحو صفحة تسجيل الدخول أو النموذج المطلوب.");
+        lines.push("استخدم click على أحد الأزرار/الروابط المدرجة أدناه — لا تستخدم wait.");
+      } else {
         lines.push("\nحقول الإدخال:");
+      }
+
+      if (data.inputs.length > 0) {
         let selectIdx = 0;
         data.inputs.forEach((inp: any) => {
           const visibleLabel = inp.label || inp.placeholder || "";
