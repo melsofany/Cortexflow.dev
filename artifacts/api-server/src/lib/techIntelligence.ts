@@ -524,16 +524,22 @@ class PerformanceMonitor {
     }
 
     // فحص Agent Service — في cloud قد يكون نائماً (Render starter spin-down)
-    try {
-      const agentTimeout = isCloud ? 8000 : 3000;
-      await axios.get(`${AGENT_SERVICE}/health`, { timeout: agentTimeout });
-      this.data.apiHealth.agentService = true;
-      metrics.push({ name: "agent_service_status", value: 1, unit: "bool", timestamp: new Date().toISOString(), status: "healthy" });
-    } catch {
-      this.data.apiHealth.agentService = false;
-      if (!isCloud) {
-        metrics.push({ name: "agent_service_status", value: 0, unit: "bool", timestamp: new Date().toISOString(), status: "warning" });
-        issues.push("خدمة الوكيل Python غير متاحة");
+    {
+      const agentTimeout = isCloud ? 30000 : 4000;
+      const maxRetries = isCloud ? 2 : 1;
+      let agentOk = false;
+      for (let attempt = 0; attempt < maxRetries && !agentOk; attempt++) {
+        try {
+          await axios.get(`${AGENT_SERVICE}/health`, { timeout: agentTimeout });
+          agentOk = true;
+        } catch { /* retry */ }
+      }
+      this.data.apiHealth.agentService = agentOk;
+      if (agentOk) {
+        metrics.push({ name: "agent_service_status", value: 1, unit: "bool", timestamp: new Date().toISOString(), status: "healthy" });
+      } else {
+        metrics.push({ name: "agent_service_status", value: 0, unit: "bool", timestamp: new Date().toISOString(), status: isCloud ? "warning" : "warning" });
+        if (!isCloud) issues.push("خدمة الوكيل Python غير متاحة");
       }
     }
 
@@ -658,10 +664,8 @@ class TechIntelligenceSystem {
       }
     }, 12 * 60 * 60 * 1000);
 
-    // فحص فوري عند البدء (بعد 5 ثوانٍ)
-    setTimeout(() => {
-      this.monitor.checkHealth().catch(console.error);
-    }, 5 * 1000);
+    // فحص فوري عند البدء
+    this.monitor.checkHealth().catch(console.error);
 
     // بحث تقني فوري إذا لم يحدث مؤخراً (بعد 60 ثانية)
     setTimeout(async () => {

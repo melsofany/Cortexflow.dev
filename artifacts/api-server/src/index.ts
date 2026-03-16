@@ -60,14 +60,11 @@ io.on("connection", (socket) => {
   });
 
   // إرسال بيانات التقنية فوراً عند الاتصال
-  const latestSnap = techIntelligence.monitor.getLatestSnapshot();
-  if (latestSnap) {
-    socket.emit("techUpdate", {
-      performance: latestSnap,
-      pendingImprovements: techIntelligence.improver.getPending().length,
-      apiHealth: techIntelligence.monitor.getData().apiHealth,
-    });
-  }
+  socket.emit("techUpdate", {
+    performance: techIntelligence.monitor.getLatestSnapshot(),
+    pendingImprovements: techIntelligence.improver.getPending().length,
+    apiHealth: techIntelligence.monitor.getData().apiHealth,
+  });
 
   // If a task just finished (within last 30s), re-deliver the result
   if (lastCompletedTask) {

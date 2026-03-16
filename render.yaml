@@ -6,10 +6,9 @@ services:
     repo: https://github.com/melsofany/Cortexflow-dev
     branch: master
     buildCommand: >-
-      apt-get update -qq &&
-      (apt-get install -y chromium chromium-driver || apt-get install -y chromium-browser || true) &&
       npm install -g pnpm@10 &&
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile &&
+      pnpm install --frozen-lockfile &&
+      npx playwright install chromium --with-deps &&
       (pnpm --filter @workspace/api-zod build || true) &&
       pnpm --filter @workspace/api-server build
     startCommand: "node artifacts/api-server/dist/index.cjs"
@@ -25,10 +24,6 @@ services:
         value: https://cortexflow-agent.onrender.com
       - key: OLLAMA_URL
         value: http://localhost:11434
-      - key: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
-        value: "1"
-      - key: CHROMIUM_PATH
-        value: /usr/bin/chromium
       - key: RENDER
         value: "true"
       - key: DEEPSEEK_API_KEY

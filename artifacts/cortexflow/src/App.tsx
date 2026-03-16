@@ -226,7 +226,8 @@ const InputRequestBanner = memo(({ req, onAnswer }: { req: InputRequest; onAnswe
 });
 
 // ─── TechPanel ────────────────────────────────────────────────────────────────
-const TechPanel = memo(({ apiBase, isCloud = false }: { apiBase: string; isCloud?: boolean }) => {
+type LiveHealth = { deepseek: boolean; ollama: boolean; browser: boolean; agentService: boolean } | null;
+const TechPanel = memo(({ apiBase, isCloud = false, liveHealth }: { apiBase: string; isCloud?: boolean; liveHealth?: LiveHealth }) => {
   const [knowledge, setKnowledge]       = useState<TechKnowledge | null>(null);
   const [improvements, setImprovements] = useState<CodeImprovement[]>([]);
   const [perf, setPerf]                 = useState<PerfData | null>(null);
@@ -326,12 +327,15 @@ const TechPanel = memo(({ apiBase, isCloud = false }: { apiBase: string; isCloud
             <div className="rounded-xl bg-slate-900/60 border border-slate-800/50 p-3">
               <p className="text-[10px] uppercase tracking-widest text-slate-600 mb-2">صحة الخدمات</p>
               <div className="grid grid-cols-2 gap-2">
-                {[
-                  { label: 'DeepSeek', ok: perf.apiHealth.deepseek, cloudNA: false },
-                  { label: 'Ollama', ok: perf.apiHealth.ollama, cloudNA: true },
-                  { label: 'خدمة الوكيل', ok: perf.apiHealth.agentService, cloudNA: false },
-                  { label: 'المتصفح', ok: perf.apiHealth.browser, cloudNA: false },
-                ].map(({ label, ok, cloudNA }) => {
+                {(() => {
+                  const health = liveHealth ?? perf.apiHealth;
+                  return [
+                    { label: 'DeepSeek', ok: health.deepseek, cloudNA: false },
+                    { label: 'Ollama', ok: health.ollama, cloudNA: true },
+                    { label: 'خدمة الوكيل', ok: health.agentService, cloudNA: false },
+                    { label: 'المتصفح', ok: health.browser, cloudNA: false },
+                  ];
+                })().map(({ label, ok, cloudNA }) => {
                   const na = isCloud && cloudNA && !ok;
                   return (
                     <div key={label} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border ${ok ? 'bg-emerald-500/5 border-emerald-500/20' : na ? 'bg-slate-700/20 border-slate-700/40' : 'bg-red-500/5 border-red-500/20'}`}>
@@ -1413,7 +1417,7 @@ const App: React.FC = () => {
             {/* Tech Intelligence column — toggled by showTech */}
             {showTech && (
               <div className="w-[280px] border-l border-slate-800/50 flex flex-col min-h-0 overflow-hidden transition-all duration-300 flex-shrink-0">
-                <TechPanel apiBase={(import.meta.env.VITE_API_URL as string) || ''} isCloud={isCloud}/>
+                <TechPanel apiBase={(import.meta.env.VITE_API_URL as string) || ''} isCloud={isCloud} liveHealth={liveHealth}/>
               </div>
             )}
           </div>
@@ -1434,7 +1438,7 @@ const App: React.FC = () => {
                     <PlanPanel plan={currentPlan} agentActivity={agentActivity} isAgentBusy={isAgentBusy}/>
                   </div>
                 : activeTab === 'tech'
-                ? <TechPanel apiBase={(import.meta.env.VITE_API_URL as string) || ''} isCloud={isCloud}/>
+                ? <TechPanel apiBase={(import.meta.env.VITE_API_URL as string) || ''} isCloud={isCloud} liveHealth={liveHealth}/>
                 : <BrowserPanel
                     frameSrc={browserFrameSrc} browserHasFrame={browserHasFrame}
                     isAgentBusy={isAgentBusy} onEmit={emitBrowser}
