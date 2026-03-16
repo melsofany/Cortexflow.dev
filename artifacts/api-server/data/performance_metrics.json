@@ -1,6 +1,92 @@
 {
   "snapshots": [
     {
+      "timestamp": "2026-03-16T17:13:05.455Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1915,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:13:05.447Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:13:05.450Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 0,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:13:05.455Z",
+          "status": "warning"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-16T17:13:05.455Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 144682,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:13:05.455Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [
+        "خدمة الوكيل Python غير متاحة"
+      ],
+      "score": 60
+    },
+    {
+      "timestamp": "2026-03-16T17:10:22.495Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1821,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:10:22.481Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:10:22.483Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:10:22.495Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-16T17:10:22.495Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 144682,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:10:22.495Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
       "timestamp": "2026-03-16T17:05:22.041Z",
       "metrics": [
         {
@@ -2155,10 +2241,15 @@
     "deepseek": true,
     "ollama": true,
     "browser": true,
-    "agentService": true
+    "agentService": false
   },
-  "lastCheck": "2026-03-16T17:05:22.041Z",
+  "lastCheck": "2026-03-16T17:13:05.455Z",
   "alerts": [
+    {
+      "level": "warn",
+      "message": "أداء النظام يحتاج متابعة: 60/100",
+      "timestamp": "2026-03-16T17:13:05.455Z"
+    },
     {
       "level": "warn",
       "message": "أداء النظام يحتاج متابعة: 60/100",
