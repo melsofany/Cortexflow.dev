@@ -72,6 +72,43 @@ lib/
 - **Real-time updates**: Socket.io streaming with thinking steps display
 - **Arabic + English UI** support
 
+## Tech Intelligence System (ذكاء التقنية)
+
+A fully integrated self-learning and self-optimization system:
+
+### 3 Core Modules (techIntelligence.ts)
+
+1. **TechResearcher** — Searches for the latest AI/tech libraries and frameworks every 6h
+   - Topics: LangChain/LangGraph/AutoGen/CrewAI updates, Playwright best practices, DeepSeek models, Node.js/TypeScript patterns
+   - Injects tech context into every agent system prompt
+
+2. **CodeSelfImprover** — Analyzes key codebase files every 12h using DeepSeek
+   - Files analyzed: agentRunner.ts, browserAgent.ts, learningEngine.ts, modelSelector.ts, main.py
+   - Suggests specific improvements (performance, security, modernization, best-practice, bug-fix)
+   - Each improvement can be applied or rejected from the UI
+
+3. **PerformanceMonitor** — Checks system health every 5min
+   - Monitors: DeepSeek API latency, Ollama availability, Agent Service, task success rate, avg duration
+   - Generates scored snapshots (0-100) and alerts
+
+### TechPanel UI (لوحة ذكاء التقنية)
+- Available on **desktop** (toggle "ذكاء التقنية" button in header, shows as right sidebar)
+- Available on **mobile** (dedicated "الذكاء" tab in bottom navigation)
+- Live score shown in header button, auto-refreshes every 30s
+- Sections: 📊 Performance | 🔬 Technologies | 🔧 Code Improvements
+
+### Tech Intelligence API Routes (/api/tech/*)
+- `GET /api/tech/knowledge` — tech knowledge base
+- `POST /api/tech/research` — trigger immediate research
+- `GET /api/tech/improvements/pending` — pending code suggestions
+- `POST /api/tech/improvements/:id/apply` — apply a code improvement
+- `POST /api/tech/improvements/:id/reject` — reject a suggestion
+- `GET /api/tech/performance` — full performance data
+- `GET /api/tech/report` — AI-generated performance report
+
+### Socket.io Events
+- `techUpdate` — emitted on connection and every 60s with live performance score + API health
+
 ## Services & Ports
 
 | Service            | Port  | Notes                           |

@@ -254,7 +254,11 @@ const TechPanel = memo(({ apiBase }: { apiBase: string }) => {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
+  }, [load]);
 
   const latestSnap = perf?.snapshots?.[0];
   const scoreColor = (s: number) => s >= 80 ? 'text-emerald-400' : s >= 50 ? 'text-yellow-400' : 'text-red-400';
@@ -964,11 +968,14 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab]         = useState<ActiveTab>('chat');
   const [sidebarOpen, setSidebarOpen]     = useState(false);
   const [showPlan, setShowPlan]           = useState(true);
+  const [showTech, setShowTech]           = useState(false);
   const [browserMode, setBrowserMode]     = useState<'normal'|'expanded'|'hidden'>('normal');
   const [isAgentBusy, setIsAgentBusy]     = useState(false);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequest | null>(null);
   const [currentPlan, setCurrentPlan]     = useState<TaskPlan | null>(null);
   const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null);
+  const [liveScore, setLiveScore]         = useState<number | null>(null);
+  const [liveHealth, setLiveHealth]       = useState<{deepseek:boolean;ollama:boolean;browser:boolean;agentService:boolean} | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
 
@@ -1129,6 +1136,11 @@ const App: React.FC = () => {
     socket.on('agentNeedsInput', (d: InputRequest) => {
       setPendingInputRequest(d);
       setActiveTab('chat');
+    });
+
+    socket.on('techUpdate', (d: { performance: PerfSnapshot | null; pendingImprovements: number; apiHealth: any }) => {
+      if (d.performance?.score != null) setLiveScore(d.performance.score);
+      if (d.apiHealth) setLiveHealth(d.apiHealth);
     });
 
     return () => { socket.disconnect(); };
@@ -1300,6 +1312,29 @@ const App: React.FC = () => {
               {browserMode === 'hidden' ? <Eye size={15}/> : <EyeOff size={15}/>}
               <span className="text-[11px] font-medium">{browserMode === 'hidden' ? 'إظهار المتصفح' : 'إخفاء المتصفح'}</span>
             </button>
+
+            <div className="w-px h-5 bg-slate-800 mx-0.5"/>
+
+            {/* Toggle tech panel */}
+            <button
+              onClick={() => setShowTech(t => !t)}
+              title={showTech ? 'إخفاء لوحة الذكاء' : 'إظهار لوحة الذكاء التقني'}
+              className={`p-2 rounded-lg transition-all text-xs flex items-center gap-1.5 ${
+                showTech
+                  ? 'text-violet-400 bg-violet-500/15 hover:bg-violet-500/25'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <FlaskConical size={15}/>
+              <span className="text-[11px] font-medium">{showTech ? 'أخفِ الذكاء' : 'ذكاء التقنية'}</span>
+              {liveScore !== null && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                  liveScore >= 80 ? 'bg-emerald-500/20 text-emerald-400' :
+                  liveScore >= 50 ? 'bg-yellow-500/20 text-yellow-400' :
+                  'bg-red-500/20 text-red-400'
+                }`}>{liveScore}</span>
+              )}
+            </button>
           </div>
 
           <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`}/>
@@ -1344,6 +1379,13 @@ const App: React.FC = () => {
                   frameSrc={browserFrameSrc} browserHasFrame={browserHasFrame}
                   isAgentBusy={isAgentBusy} onEmit={emitBrowser}
                 />
+              </div>
+            )}
+
+            {/* Tech Intelligence column — toggled by showTech */}
+            {showTech && (
+              <div className="w-[280px] border-l border-slate-800/50 flex flex-col min-h-0 overflow-hidden transition-all duration-300 flex-shrink-0">
+                <TechPanel apiBase={(import.meta.env.VITE_API_URL as string) || ''}/>
               </div>
             )}
           </div>

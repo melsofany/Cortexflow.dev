@@ -57,6 +57,16 @@ io.on("connection", (socket) => {
     timestamp: new Date(),
   });
 
+  // إرسال بيانات التقنية فوراً عند الاتصال
+  const latestSnap = techIntelligence.monitor.getLatestSnapshot();
+  if (latestSnap) {
+    socket.emit("techUpdate", {
+      performance: latestSnap,
+      pendingImprovements: techIntelligence.improver.getPending().length,
+      apiHealth: techIntelligence.monitor.getData().apiHealth,
+    });
+  }
+
   // If a task just finished (within last 30s), re-deliver the result
   if (lastCompletedTask) {
     socket.emit("taskSuccess", lastCompletedTask);
@@ -315,6 +325,17 @@ async function startServer() {
 
   // ── Tech Intelligence: بحث، تطوير ذاتي، مراقبة ────────────────────────
   techIntelligence.startBackgroundJobs();
+
+  // ── إرسال تحديثات التقنية عبر Socket.io ───────────────────────────────
+  setInterval(() => {
+    if (io.engine.clientsCount > 0) {
+      io.emit("techUpdate", {
+        performance: techIntelligence.monitor.getLatestSnapshot(),
+        pendingImprovements: techIntelligence.improver.getPending().length,
+        apiHealth: techIntelligence.monitor.getData().apiHealth,
+      });
+    }
+  }, 60 * 1000); // كل دقيقة
 
   httpServer.listen(port, () => {
     console.log(`[Server] CortexFlow running on port ${port}`);
