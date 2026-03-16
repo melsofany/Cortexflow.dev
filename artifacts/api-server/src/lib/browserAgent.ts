@@ -292,32 +292,24 @@ class BrowserAgent extends EventEmitter {
       } catch { }
     }
 
-    // 6. احتياطي: إذا كان النص يدل على تسجيل الدخول — جرّب أي زر submit في الصفحة
-    const loginKeywords = ["log in", "login", "sign in", "signin", "تسجيل الدخول", "دخول", "submit", "إرسال", "continue", "متابعة", "next", "التالي"];
-    const isLoginLike = loginKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));
-    if (isLoginLike) {
+    // 6. احتياطي عام: إذا كان النص يدل على إجراء يتطلب زراً — جرّب أي زر submit في الصفحة
+    const actionKeywords = ["log in", "login", "sign in", "signin", "تسجيل الدخول", "دخول", "submit", "إرسال", "continue", "متابعة", "next", "التالي", "confirm", "تأكيد", "ok", "apply"];
+    const isActionLike = actionKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));
+    if (isActionLike) {
       for (const frame of frames) {
         const fLoc = (sel: string) => frame.locator(sel);
-        // Facebook-specific selectors (highest priority)
-        if (await tryClick(fLoc(`#loginbutton`))) return true;
-        if (await tryClick(fLoc(`[data-testid="royal_login_button"]`))) return true;
-        if (await tryClick(fLoc(`[name="login"]`))) return true;
+        // أزرار submit عامة (أي موقع)
         if (await tryClick(fLoc(`button[type="submit"]`))) return true;
         if (await tryClick(fLoc(`input[type="submit"]`))) return true;
-        if (await tryClick(fLoc(`[data-testid*="login"]`))) return true;
-        if (await tryClick(fLoc(`[id*="login"][id*="button"]`))) return true;
-        if (await tryClick(fLoc(`[id*="login"]`))) return true;
-        if (await tryClick(fLoc(`[class*="login"]`))) return true;
-        // محاولة النقر على أي زر مرئي في نهاية نموذج
+        // أزرار بمعرّفات تحتوي على كلمات مفتاحية للدخول
+        if (await tryClick(fLoc(`[id*="login"][id*="btn"], [id*="login"][id*="button"]`))) return true;
+        if (await tryClick(fLoc(`[name*="login"], [name*="submit"]`))) return true;
+        if (await tryClick(fLoc(`[data-testid*="login"], [data-testid*="submit"]`))) return true;
+        if (await tryClick(fLoc(`[class*="login-btn"], [class*="submit-btn"], [class*="signin-btn"]`))) return true;
+        // آخر زر في أي نموذج في الصفحة
         if (await tryClick(fLoc(`form button`).last())) return true;
         if (await tryClick(fLoc(`form input[type="submit"]`))) return true;
       }
-      // آخر محاولة: اضغط Enter في الصفحة
-      try {
-        await this.page.keyboard.press("Enter");
-        await this.page.waitForTimeout(1500);
-        return true;
-      } catch { }
     }
 
     // 7. احتياطي شامل: إذا فشلت كل المحاولات، اضغط Enter
@@ -1041,7 +1033,10 @@ class BrowserAgent extends EventEmitter {
       if (data.buttons.length > 0) {
         lines.push("\nالأزرار والروابط:");
         data.buttons.forEach((btn: any) => {
-          if (btn.text) lines.push(`  - [${btn.tag}] "${btn.text}" ${btn.href ? `-> ${btn.href}` : ""}`);
+          if (btn.text) {
+            const selectorHint = btn.selector && btn.selector !== btn.tag ? ` [sel:${btn.selector}]` : "";
+            lines.push(`  - [${btn.tag}] "${btn.text}"${selectorHint}${btn.href ? ` -> ${btn.href}` : ""}`);
+          }
         });
       }
 
@@ -1143,6 +1138,49 @@ class BrowserAgent extends EventEmitter {
       } catch { }
     }
     return false;
+  }
+
+  // ── نقر بمساعدة الذكاء الاصطناعي — يُرسل قائمة العناصر ويختار الصحيح ──
+  async aiAssistedClick(
+    target: string,
+    askAI: (prompt: string) => Promise<string>,
+  ): Promise<{ success: boolean; selector?: string }> {
+    if (!this.page) return { success: false };
+
+    const elements = await this.getInteractiveElements();
+    if (elements.length === 0) return { success: false };
+
+    const elemsList = elements
+      .map(e =>
+        `[${e.idx}] tag=${e.tag} text="${e.text}" aria="${e.ariaLabel}" id="${e.id}" name="${e.name}" type="${e.type}" sel="${e.selector}" inForm=${e.inForm} isSubmit=${e.isSubmit}`
+      )
+      .join("\n");
+
+    const prompt = `قائمة كل العناصر التفاعلية المرئية في الصفحة:
+${elemsList}
+
+المطلوب: النقر على العنصر الذي يتوافق مع: "${target}"
+
+أجب بـ JSON واحد فقط بلا أي نص إضافي:
+{ "selector": "CSS_SELECTOR", "reason": "سبب الاختيار" }
+
+استخدم قيمة sel= من القائمة مباشرة. اختر العنصر الأنسب.`;
+
+    try {
+      const aiResp = await askAI(prompt);
+      const jsonMatch = aiResp.match(/\{[\s\S]*?\}/);
+      if (!jsonMatch) return { success: false };
+      const parsed = JSON.parse(jsonMatch[0]);
+      const selector: string = parsed.selector || "";
+      if (!selector) return { success: false };
+
+      console.log(`[aiAssistedClick] AI اختار: "${selector}" لـ "${target}" — السبب: ${parsed.reason || "—"}`);
+      const clicked = await this.clickByAnySelector([selector]);
+      return { success: clicked, selector };
+    } catch (e: any) {
+      console.log(`[aiAssistedClick] فشل: ${e.message}`);
+      return { success: false };
+    }
   }
 
   async getCurrentUrl(): Promise<string> {

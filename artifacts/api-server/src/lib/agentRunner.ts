@@ -89,6 +89,7 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 الإجراءات المتاحة:
   navigate  - الانتقال إلى رابط URL: PARAM: https://...
   click     - النقر على عنصر بالنص المرئي: PARAM: نص_الزر
+             أو نقر بـ CSS selector مباشر: PARAM: sel:#id أو sel:.class أو sel:[attr="val"]
   fill      - ملء حقل نصي: PARAM: اسم_الحقل=القيمة
   select    - اختيار من قائمة منسدلة: PARAM: اسم_القائمة=الخيار
   ask       - اطلب من المستخدم إدخال بيانات: PARAM: وصف ما تحتاجه
@@ -127,11 +128,12 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - أو استخدم الاسم مباشرة إذا ظهر: select PARAM: day=15
 - الخيارات المتاحة مذكورة في الهيكل — اختر أقرب قيمة مطابقة
 
-━━━ قاعدة click وأزرار تسجيل الدخول ━━━
-- النقر على الأزرار: استخدم النص الإنجليزي كما يظهر في الصفحة (Log In, Login, Continue, Next)
-- إذا فشل click → استخدم فوراً: key PARAM: Enter (يرسل النموذج مباشرة)
-- بعد ملء حقلي البريد وكلمة المرور → جرّب key PARAM: Enter مباشرة بدل click
-- الأزرار على Facebook/Meta غالباً بالإنجليزية: "Log In" وليس "تسجيل الدخول"
+━━━ قاعدة click وأزرار أي موقع ━━━
+- النقر على الأزرار: استخدم النص المرئي كما يظهر في هيكل الصفحة
+- إذا ظهر [sel:...] بجانب الزر في هيكل الصفحة → استخدمه مباشرة: click PARAM: sel:#loginBtn
+- إذا فشل click بالنص → استخدم: click PARAM: sel:SELECTOR من هيكل الصفحة
+- إذا فشل كل شيء → استخدم: key PARAM: Enter
+- الوكيل ذكي: إذا فشل النقر بالنص، يستشير DeepSeek تلقائياً ليختار العنصر الصحيح
 
 ━━━ قاعدة ask ━━━
 - استخدم ask للبيانات الحساسة التي لا يمكنك معرفتها: كلمة المرور، البريد، الهاتف
@@ -148,10 +150,6 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - إذا ظهر "لا توجد حقول إدخال" → الصفحة صفحة تنقل أو محتوى
 - الحل: انقر على الزر/الرابط المناسب أو انتقل للصفحة الصحيحة
 - لا تستخدم wait أكثر من مرة واحدة إذا لم تتغير الصفحة
-
-━━━ قواعد المواقع المعروفة ━━━
-- واتساب للأعمال/Business API/WhatsApp Cloud API: الموقع الصحيح هو developers.facebook.com
-- لإنشاء تطبيق واتساب تجاري للحصول على API: ابدأ من https://developers.facebook.com/
 
 القواعد الصارمة:
 - سطر واحد فقط، لا شرح ولا تعليق
@@ -1352,14 +1350,39 @@ async function executeAction(
       await browserAgent.captureNow();
       return { success: true };
     case "click": {
+      // دعم النقر المباشر بـ CSS selector: click PARAM: sel:CSS_SELECTOR
+      if (param.startsWith("sel:")) {
+        const cssSelector = param.slice(4).trim();
+        const clickedSel = await browserAgent.clickByAnySelector([cssSelector]);
+        if (!clickedSel) return { success: false, error: `لم يُعثر على عنصر بالـ selector: "${cssSelector}"` };
+        return { success: true };
+      }
+
       const clicked = await browserAgent.clickByText(param);
       if (!clicked) {
-        // احتياطي: اضغط Enter — يعمل لمعظم نماذج تسجيل الدخول
+        // الاحتياطي الذكي: يسأل DeepSeek عن العنصر الصحيح بناءً على قائمة كل العناصر
+        console.log(`[click] فشل النقر بالنص "${param}" — تشغيل AI-assisted click...`);
+        const { success: aiClicked, selector: aiSel } = await browserAgent.aiAssistedClick(
+          param,
+          async (prompt) => {
+            const DEEPSEEK_KEY = getDeepSeekKey();
+            if (!DEEPSEEK_KEY) return "";
+            return deepseekChat([
+              { role: "system", content: "أنت مساعد لتحديد عناصر صفحات الويب. أجب بـ JSON فقط بلا أي نص إضافي." },
+              { role: "user", content: prompt },
+            ], 300, 0.1);
+          },
+        );
+        if (aiClicked) {
+          console.log(`[click] AI-assisted click نجح باستخدام: ${aiSel}`);
+          return { success: true };
+        }
+        // آخر احتياطي: اضغط Enter
         try {
           await browserAgent.pressKey("Enter");
           return { success: true };
         } catch { }
-        return { success: false, error: `لم يُعثر على عنصر بالنص: "${param}" — جرّب: key PARAM: Enter` };
+        return { success: false, error: `لم يُعثر على عنصر بالنص: "${param}" — جرّب: click PARAM: sel:CSS_SELECTOR أو key PARAM: Enter` };
       }
       return { success: true };
     }
