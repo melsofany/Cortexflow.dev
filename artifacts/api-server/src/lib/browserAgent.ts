@@ -12,6 +12,34 @@ class BrowserAgent extends EventEmitter {
   private currentUrl = "";
   private capturing = false;
 
+  private async applyStealthPatches(): Promise<void> {
+    if (!this.context) return;
+    await this.context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [
+          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+          { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+          { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 },
+        ],
+      });
+      Object.defineProperty(navigator, 'languages', { get: () => ['ar-SA', 'ar', 'en-US', 'en'] });
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+      Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+      Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+      (window as any).chrome = {
+        app: { isInstalled: false },
+        runtime: {
+          onConnect: { addListener: () => {} },
+          onMessage: { addListener: () => {} },
+        },
+      };
+      const originalQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+      window.navigator.permissions.query = (params: any) =>
+        (params.name === 'notifications') ? Promise.resolve({ state: 'denied' } as any) : originalQuery(params);
+    });
+  }
+
   async initialize(): Promise<boolean> {
     if (this.initialized) return true;
     try {
@@ -24,18 +52,30 @@ class BrowserAgent extends EventEmitter {
           "--disable-dev-shm-usage",
           "--disable-gpu",
           "--no-first-run",
+          "--disable-blink-features=AutomationControlled",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--disable-site-isolation-trials",
+          "--flag-switches-begin",
+          "--disable-site-isolation-trials",
+          "--flag-switches-end",
+          "--disable-web-security",
+          "--allow-running-insecure-content",
           "--disable-extensions",
         ],
       });
       this.context = await this.browser.newContext({
         viewport: { width: 1280, height: 720 },
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         locale: "ar-SA",
+        extraHTTPHeaders: {
+          "Accept-Language": "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
       });
+      await this.applyStealthPatches();
       this.page = await this.context.newPage();
       await this.page.goto("about:blank");
       this.initialized = true;
-      console.log("[BrowserAgent] Chromium initialized successfully");
+      console.log("[BrowserAgent] Chromium initialized with stealth mode");
       this.startStreaming();
       return true;
     } catch (err: any) {

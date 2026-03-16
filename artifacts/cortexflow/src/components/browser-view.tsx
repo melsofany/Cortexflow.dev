@@ -29,10 +29,14 @@ export function BrowserView() {
   const toBrowserCoords = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
+    const native = e.nativeEvent as MouseEvent;
+    const displayW = canvas.offsetWidth  || canvas.clientWidth  || 1;
+    const displayH = canvas.offsetHeight || canvas.clientHeight || 1;
+    const ox = native.offsetX ?? (native.clientX - canvas.getBoundingClientRect().left);
+    const oy = native.offsetY ?? (native.clientY - canvas.getBoundingClientRect().top);
     return {
-      x: Math.round(Math.max(0, Math.min(BROWSER_W - 1, ((e.clientX - rect.left) / rect.width)  * BROWSER_W))),
-      y: Math.round(Math.max(0, Math.min(BROWSER_H - 1, ((e.clientY - rect.top)  / rect.height) * BROWSER_H))),
+      x: Math.round(Math.max(0, Math.min(BROWSER_W - 1, (ox / displayW) * BROWSER_W))),
+      y: Math.round(Math.max(0, Math.min(BROWSER_H - 1, (oy / displayH) * BROWSER_H))),
     };
   }, []);
 

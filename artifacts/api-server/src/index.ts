@@ -239,6 +239,7 @@ io.on("connection", (socket) => {
     if (browserAgent.isReady()) await browserAgent.userClick(d.x, d.y).catch(() => {});
   });
   socket.on("userMouseDown",   async (d: { x: number; y: number }) => {
+    console.log(`[click] x=${d.x} y=${d.y}`);
     if (browserAgent.isReady()) await browserAgent.userMouseDown(d.x, d.y).catch(() => {});
   });
   socket.on("userMouseUp",     async (d: { x: number; y: number }) => {
