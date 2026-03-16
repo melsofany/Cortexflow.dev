@@ -26,10 +26,18 @@ export function BrowserView() {
 
   const getScale = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return { sx: 1, sy: 1 };
+    if (!canvas) return { sx: 1, sy: 1, offsetX: 0, offsetY: 0 };
+    const dW = canvas.offsetWidth;
+    const dH = canvas.offsetHeight;
+    // object-contain: scale uniformly so content fits inside the box
+    const scale = Math.min(dW / BROWSER_W, dH / BROWSER_H);
+    const renderedW = BROWSER_W * scale;
+    const renderedH = BROWSER_H * scale;
     return {
-      sx: BROWSER_W / canvas.offsetWidth,
-      sy: BROWSER_H / canvas.offsetHeight,
+      sx: BROWSER_W / renderedW,
+      sy: BROWSER_H / renderedH,
+      offsetX: (dW - renderedW) / 2,
+      offsetY: (dH - renderedH) / 2,
     };
   }, []);
 
@@ -37,10 +45,10 @@ export function BrowserView() {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const { sx, sy } = getScale();
+    const { sx, sy, offsetX, offsetY } = getScale();
     return {
-      x: Math.round((e.clientX - rect.left) * sx),
-      y: Math.round((e.clientY - rect.top) * sy),
+      x: Math.round(Math.max(0, Math.min(BROWSER_W - 1, (e.clientX - rect.left - offsetX) * sx))),
+      y: Math.round(Math.max(0, Math.min(BROWSER_H - 1, (e.clientY - rect.top  - offsetY) * sy))),
     };
   }, [getScale]);
 
