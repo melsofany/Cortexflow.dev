@@ -179,6 +179,56 @@ class BrowserAgent extends EventEmitter {
     return false;
   }
 
+  // اختيار قيمة من قائمة <select> بطريقة ذكية (بالنص أو القيمة أو الرقم)
+  async smartSelect(hint: string, value: string): Promise<boolean> {
+    if (!this.page) return false;
+
+    const trySelect = async (selector: string): Promise<boolean> => {
+      try {
+        const loc = this.page!.locator(selector).first();
+        await loc.waitFor({ state: "visible", timeout: 3000 });
+        // حاول بالقيمة النصية أولاً، ثم بالنص الظاهر، ثم بالرقم
+        try { await loc.selectOption({ label: value }); return true; } catch { /* تجاهل */ }
+        try { await loc.selectOption({ value: value }); return true; } catch { /* تجاهل */ }
+        try { await loc.selectOption({ index: parseInt(value) }); return true; } catch { /* تجاهل */ }
+        return false;
+      } catch { return false; }
+    };
+
+    if (await trySelect(`select[name="${hint}"]`)) return true;
+    if (await trySelect(`select[name*="${hint}"]`)) return true;
+    if (await trySelect(`select[id="${hint}"]`)) return true;
+
+    // بحث عبر التسمية
+    try {
+      const found = await this.page.evaluate(({ hint, value }) => {
+        const h = hint.toLowerCase();
+        for (const sel of Array.from(document.querySelectorAll<HTMLSelectElement>("select"))) {
+          const label = sel.labels?.[0]?.textContent?.toLowerCase() || "";
+          const nm    = (sel.name || "").toLowerCase();
+          const id    = (sel.id   || "").toLowerCase();
+          if (label.includes(h) || nm.includes(h) || id.includes(h)) {
+            // حاول المطابقة بالنص أو القيمة
+            const opt = Array.from(sel.options).find(o =>
+              o.text.toLowerCase().includes(value.toLowerCase()) ||
+              o.value.toLowerCase().includes(value.toLowerCase()) ||
+              o.value === value
+            );
+            if (opt) {
+              sel.value = opt.value;
+              sel.dispatchEvent(new Event("change", { bubbles: true }));
+              return true;
+            }
+          }
+        }
+        return false;
+      }, { hint, value });
+      if (found) return true;
+    } catch { /* تجاهل */ }
+
+    return false;
+  }
+
   async type(text: string): Promise<void> {
     if (!this.page) return;
     await this.page.keyboard.type(text, { delay: 50 });
@@ -220,14 +270,20 @@ class BrowserAgent extends EventEmitter {
     if (!this.page) return "";
     try {
       const data = await this.page.evaluate(() => {
-        const inputs = Array.from(document.querySelectorAll("input, textarea, select")).slice(0, 20).map((el: any) => ({
-          tag: el.tagName.toLowerCase(),
-          type: el.type || "",
-          name: el.name || "",
-          id: el.id || "",
-          placeholder: el.placeholder || "",
-          label: el.labels?.[0]?.textContent?.trim() || "",
-        }));
+        const inputs = Array.from(document.querySelectorAll("input, textarea, select")).slice(0, 20).map((el: any) => {
+          const base: any = {
+            tag: el.tagName.toLowerCase(),
+            type: el.type || "",
+            name: el.name || "",
+            id: el.id || "",
+            placeholder: el.placeholder || "",
+            label: el.labels?.[0]?.textContent?.trim() || "",
+          };
+          if (el.tagName === "SELECT") {
+            base.options = Array.from(el.options).slice(0, 15).map((o: any) => o.text.trim()).filter(Boolean);
+          }
+          return base;
+        });
 
         const buttons = Array.from(document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button'], a.btn, a[href]")).slice(0, 30).map((el: any) => ({
           tag: el.tagName.toLowerCase(),
@@ -247,12 +303,17 @@ class BrowserAgent extends EventEmitter {
       lines.push(`URL: ${data.url}`);
 
       if (data.inputs.length > 0) {
-        lines.push("\nحقول الإدخال (استخدم name= أو id= في أوامر fill):");
+        lines.push("\nحقول الإدخال:");
         data.inputs.forEach((inp: any) => {
           const visibleLabel = inp.label || inp.placeholder || "";
-          const identifier   = inp.name ? `name="${inp.name}"` : (inp.id ? `id="${inp.id}"` : `type="${inp.type}"`);
           const fillKey      = inp.name || inp.id || inp.type;
-          lines.push(`  - fill PARAM: ${fillKey}=<القيمة>  (${identifier}${visibleLabel ? `, تسمية: "${visibleLabel}"` : ""})`);
+          if (inp.tag === "select") {
+            const opts = (inp.options || []).join(" | ");
+            lines.push(`  - [قائمة] select PARAM: ${fillKey}=<الخيار>  (تسمية: "${visibleLabel}", خيارات: ${opts})`);
+          } else {
+            const identifier = inp.name ? `name="${inp.name}"` : (inp.id ? `id="${inp.id}"` : `type="${inp.type}"`);
+            lines.push(`  - [حقل] fill PARAM: ${fillKey}=<القيمة>  (${identifier}${visibleLabel ? `, تسمية: "${visibleLabel}"` : ""})`);
+          }
         });
       }
 

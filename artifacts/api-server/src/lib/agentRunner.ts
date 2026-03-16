@@ -83,32 +83,39 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 الإجراءات المتاحة:
   navigate  - الانتقال إلى رابط URL: PARAM: https://...
   click     - النقر على عنصر بالنص المرئي: PARAM: نص_الزر
-  fill      - ملء حقل: PARAM: مُعرِّف_الحقل=القيمة
-  type      - كتابة نص في العنصر المحدد حالياً: PARAM: النص
+  fill      - ملء حقل نصي: PARAM: اسم_الحقل=القيمة
+  select    - اختيار من قائمة منسدلة <select>: PARAM: اسم_القائمة=الخيار
+  type      - كتابة نص في العنصر المحدد: PARAM: النص
   key       - ضغط مفتاح: PARAM: Enter أو Tab أو Escape
   scroll    - التمرير: PARAM: up أو down
   wait      - انتظار: PARAM: waiting
   done      - المهمة مكتملة: PARAM: وصف الإنجاز
 
-قاعدة مهمة جداً لأمر fill:
-- مُعرِّف_الحقل يجب أن يكون القيمة من عمود name= أو id= الظاهرة في "حقول الإدخال"
-- مثال: إذا رأيت name="firstname" → اكتب: fill | PARAM: firstname=أحمد
-- مثال: إذا رأيت name="email" → اكتب: fill | PARAM: email=test@example.com
-- مثال: إذا رأيت name="q" → اكتب: fill | PARAM: q=قهوة
+قاعدة fill:
+- استخدم اسم الحقل من name= أو id= الظاهر في هيكل الصفحة
+- مثال: "fill PARAM: firstname=أحمد" ← "fill PARAM: email=user@example.com"
 
-أمثلة كاملة:
+قاعدة select (للقوائم المنسدلة كالشهر والسنة والجنس):
+- استخدم اسم القائمة من name= وقيمة الخيار النصية الظاهرة
+- مثال: "select PARAM: month=يناير" ← "select PARAM: year=1990" ← "select PARAM: day=15"
+
+أمثلة كاملة لتسجيل في فيسبوك:
 ACTION: navigate | PARAM: https://www.facebook.com
 ACTION: click | PARAM: Create new account
 ACTION: fill | PARAM: firstname=أحمد
 ACTION: fill | PARAM: lastname=محمد
-ACTION: fill | PARAM: email=ahmed@example.com
-ACTION: fill | PARAM: password=MyPassword123
-ACTION: key | PARAM: Enter
+ACTION: fill | PARAM: reg_email__=ahmed@example.com
+ACTION: fill | PARAM: reg_passwd__=MyPassword123
+ACTION: select | PARAM: birthday_day=15
+ACTION: select | PARAM: birthday_month=يناير
+ACTION: select | PARAM: birthday_year=1990
+ACTION: select | PARAM: sex=1
+ACTION: click | PARAM: Create new account
 ACTION: done | PARAM: تم إنشاء الحساب بنجاح
 
 القواعد الصارمة:
 - أخرج سطر ACTION واحد فقط، لا شيء آخر أبداً
-- استخدم name= أو id= من هيكل الصفحة في أوامر fill
+- للقوائم [قائمة] استخدم select وليس fill أو click
 - استخدم "done" فقط بعد اكتمال المهمة الكاملة فعلاً`;
 
 const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً.`;
@@ -510,6 +517,17 @@ async function executeAction(action: string, param: string): Promise<void> {
       const filled = await browserAgent.smartFill(field, value);
       if (!filled) {
         console.log(`[fill] لم يُعثر على الحقل: "${field}" = "${value}"`);
+      }
+      break;
+    }
+    case "select": {
+      const eqIdx2 = param.indexOf("=");
+      if (eqIdx2 === -1) break;
+      const selField = param.substring(0, eqIdx2).trim();
+      const selValue = param.substring(eqIdx2 + 1).trim();
+      const selected = await browserAgent.smartSelect(selField, selValue);
+      if (!selected) {
+        console.log(`[select] لم يُعثر على القائمة: "${selField}" = "${selValue}"`);
       }
       break;
     }
