@@ -108,17 +108,75 @@ class BrowserAgent extends EventEmitter {
   async fillField(selector: string, value: string): Promise<boolean> {
     if (!this.page) return false;
     try {
-      await this.page.fill(selector, value, { timeout: 5000 });
+      const loc = this.page.locator(selector).first();
+      await loc.waitFor({ state: "visible", timeout: 4000 });
+      await loc.fill(value);
       return true;
     } catch {
       try {
-        await this.page.focus(selector);
-        await this.page.keyboard.type(value, { delay: 50 });
+        const loc = this.page.locator(selector).first();
+        await loc.focus();
+        await this.page.keyboard.type(value, { delay: 40 });
         return true;
       } catch {
         return false;
       }
     }
+  }
+
+  // ملء حقل بطريقة ذكية: يحاول التسمية / placeholder / name / id بالترتيب
+  async smartFill(hint: string, value: string): Promise<boolean> {
+    if (!this.page) return false;
+
+    const tryFill = async (loc: import("playwright").Locator): Promise<boolean> => {
+      try {
+        await loc.first().waitFor({ state: "visible", timeout: 3000 });
+        await loc.first().fill(value);
+        return true;
+      } catch { return false; }
+    };
+
+    // 1. Playwright getByLabel (يبحث في <label> المرتبطة)
+    if (await tryFill(this.page.getByLabel(hint, { exact: false }))) return true;
+
+    // 2. placeholder يحتوي على النص
+    if (await tryFill(this.page.locator(`[placeholder*="${hint}"]`))) return true;
+
+    // 3. name يطابق تماماً
+    if (await tryFill(this.page.locator(`[name="${hint}"]`))) return true;
+
+    // 4. name يحتوي على النص
+    if (await tryFill(this.page.locator(`[name*="${hint}"]`))) return true;
+
+    // 5. id يطابق
+    if (await tryFill(this.page.locator(`[id="${hint}"]`))) return true;
+
+    // 6. aria-label يحتوي على النص
+    if (await tryFill(this.page.locator(`[aria-label*="${hint}"]`))) return true;
+
+    // 7. بحث شامل عبر evaluate: يربط كل input بتسميته ثم يملأه
+    try {
+      const found = await this.page.evaluate(({ hint, value }) => {
+        const h = hint.toLowerCase();
+        for (const inp of Array.from(document.querySelectorAll<HTMLInputElement>("input, textarea"))) {
+          const label = inp.labels?.[0]?.textContent?.toLowerCase() || "";
+          const ph    = (inp.placeholder || "").toLowerCase();
+          const nm    = (inp.name        || "").toLowerCase();
+          const id    = (inp.id          || "").toLowerCase();
+          if (label.includes(h) || ph.includes(h) || nm.includes(h) || id.includes(h)) {
+            inp.focus();
+            inp.value = value;
+            inp.dispatchEvent(new Event("input",  { bubbles: true }));
+            inp.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          }
+        }
+        return false;
+      }, { hint, value });
+      if (found) return true;
+    } catch { /* تجاهل */ }
+
+    return false;
   }
 
   async type(text: string): Promise<void> {
@@ -189,10 +247,12 @@ class BrowserAgent extends EventEmitter {
       lines.push(`URL: ${data.url}`);
 
       if (data.inputs.length > 0) {
-        lines.push("\nحقول الإدخال:");
+        lines.push("\nحقول الإدخال (استخدم name= أو id= في أوامر fill):");
         data.inputs.forEach((inp: any) => {
-          const label = inp.label || inp.placeholder || inp.name || inp.id || inp.type;
-          lines.push(`  - [${inp.tag}] النوع: ${inp.type}, التعريف: id="${inp.id}" name="${inp.name}", النص: "${label}"`);
+          const visibleLabel = inp.label || inp.placeholder || "";
+          const identifier   = inp.name ? `name="${inp.name}"` : (inp.id ? `id="${inp.id}"` : `type="${inp.type}"`);
+          const fillKey      = inp.name || inp.id || inp.type;
+          lines.push(`  - fill PARAM: ${fillKey}=<القيمة>  (${identifier}${visibleLabel ? `, تسمية: "${visibleLabel}"` : ""})`);
         });
       }
 

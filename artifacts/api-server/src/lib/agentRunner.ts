@@ -76,34 +76,40 @@ async function smartChat(
 
 // ── نظام Prompt المتخصص ────────────────────────────────────────────────────
 
-const ACTION_SYSTEM_PROMPT = `أنت وكيل أتمتة متصفح. تتحكم في متصفح حقيقي. تفكيرك وتخطيطك الداخلي يكون باللغة العربية.
+const ACTION_SYSTEM_PROMPT = `أنت وكيل أتمتة متصفح. تتحكم في متصفح حقيقي.
 استجب بسطر واحد فقط بهذا التنسيق الثابت:
 ACTION: <الإجراء> | PARAM: <القيمة>
 
 الإجراءات المتاحة:
-  navigate  - الانتقال إلى رابط URL
-  click     - النقر على عنصر بالنص المرئي
-  fill      - ملء حقل إدخال: اسم_الحقل=القيمة
-  type      - كتابة نص في العنصر المحدد
-  key       - ضغط مفتاح: Enter أو Tab أو Escape أو Space
-  scroll    - التمرير: up للأعلى أو down للأسفل
-  wait      - انتظار لحظة
-  done      - المهمة مكتملة (استخدمها فقط عند الانتهاء الكامل)
+  navigate  - الانتقال إلى رابط URL: PARAM: https://...
+  click     - النقر على عنصر بالنص المرئي: PARAM: نص_الزر
+  fill      - ملء حقل: PARAM: مُعرِّف_الحقل=القيمة
+  type      - كتابة نص في العنصر المحدد حالياً: PARAM: النص
+  key       - ضغط مفتاح: PARAM: Enter أو Tab أو Escape
+  scroll    - التمرير: PARAM: up أو down
+  wait      - انتظار: PARAM: waiting
+  done      - المهمة مكتملة: PARAM: وصف الإنجاز
 
-أمثلة:
-المستخدم: اذهب إلى facebook.com
+قاعدة مهمة جداً لأمر fill:
+- مُعرِّف_الحقل يجب أن يكون القيمة من عمود name= أو id= الظاهرة في "حقول الإدخال"
+- مثال: إذا رأيت name="firstname" → اكتب: fill | PARAM: firstname=أحمد
+- مثال: إذا رأيت name="email" → اكتب: fill | PARAM: email=test@example.com
+- مثال: إذا رأيت name="q" → اكتب: fill | PARAM: q=قهوة
+
+أمثلة كاملة:
 ACTION: navigate | PARAM: https://www.facebook.com
-
-المستخدم: انقر على زر التسجيل
 ACTION: click | PARAM: Create new account
-
-المستخدم: ابحث عن قهوة
-ACTION: fill | PARAM: q=قهوة
+ACTION: fill | PARAM: firstname=أحمد
+ACTION: fill | PARAM: lastname=محمد
+ACTION: fill | PARAM: email=ahmed@example.com
+ACTION: fill | PARAM: password=MyPassword123
+ACTION: key | PARAM: Enter
+ACTION: done | PARAM: تم إنشاء الحساب بنجاح
 
 القواعد الصارمة:
-- أخرج سطر ACTION فقط، لا شيء آخر أبداً
-- لا تقل أبداً أنك لا تستطيع التنفيذ
-- استخدم "done" فقط بعد اكتمال المهمة الكاملة بالفعل`;
+- أخرج سطر ACTION واحد فقط، لا شيء آخر أبداً
+- استخدم name= أو id= من هيكل الصفحة في أوامر fill
+- استخدم "done" فقط بعد اكتمال المهمة الكاملة فعلاً`;
 
 const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً.`;
 
@@ -500,12 +506,11 @@ async function executeAction(action: string, param: string): Promise<void> {
       if (eqIdx === -1) break;
       const field = param.substring(0, eqIdx).trim();
       const value = param.substring(eqIdx + 1).trim();
-      const filled = await browserAgent.fillField(`#${field}`, value) ||
-        await browserAgent.fillField(`[name="${field}"]`, value) ||
-        await browserAgent.fillField(`[name*="${field}"]`, value) ||
-        await browserAgent.fillField(`[placeholder*="${field}"]`, value) ||
-        await browserAgent.fillField(`[type="${field}"]`, value);
-      if (!filled) await browserAgent.fillField(`input`, value);
+      // استخدام smartFill أولاً (يدعم التسميات العربية والإنجليزية)
+      const filled = await browserAgent.smartFill(field, value);
+      if (!filled) {
+        console.log(`[fill] لم يُعثر على الحقل: "${field}" = "${value}"`);
+      }
       break;
     }
     case "type":
