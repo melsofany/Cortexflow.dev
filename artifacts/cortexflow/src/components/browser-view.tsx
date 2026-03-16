@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Monitor, Globe, ShieldCheck, ArrowLeft, ArrowRight,
-  RefreshCw, Hand, Bot, AlertTriangle,
+  RefreshCw, Hand, Bot, AlertTriangle, Zap, Loader2,
 } from 'lucide-react';
 import { Card } from './ui-elements';
 import { useSocket } from '@/hooks/use-socket';
@@ -22,6 +22,7 @@ export function BrowserView() {
   const [captchaMode, setCaptchaMode] = useState(false);
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [debugCoords, setDebugCoords] = useState<{x:number;y:number} | null>(null);
+  const [solving, setSolving] = useState(false);
 
   const lastMoveRef  = useRef<number>(0);
   const lastClickRef = useRef<{x:number;y:number} | null>(null);
@@ -210,6 +211,25 @@ export function BrowserView() {
         >
           <AlertTriangle size={11} />
           <span className="hidden sm:inline">Captcha</span>
+        </button>
+
+        <button
+          onClick={() => {
+            if (!socket || solving) return;
+            setSolving(true);
+            socket.emit('solveCaptchaAuto');
+            setTimeout(() => setSolving(false), 30000);
+          }}
+          disabled={solving || !hasStream}
+          title="حل الكابتشا تلقائياً (يتطلب TWO_CAPTCHA_API_KEY أو CAPSOLVER_API_KEY)"
+          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${
+            solving
+              ? 'bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 cursor-wait'
+              : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
+          }`}
+        >
+          {solving ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+          <span className="hidden sm:inline">{solving ? 'حل...' : 'Auto'}</span>
         </button>
 
         <button

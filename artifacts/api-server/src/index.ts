@@ -238,6 +238,11 @@ io.on("connection", (socket) => {
   socket.on("userMouseClick",  async (d: { x: number; y: number }) => {
     if (browserAgent.isReady()) await browserAgent.userClick(d.x, d.y).catch(() => {});
   });
+  socket.on("solveCaptchaAuto", async () => {
+    if (!browserAgent.isReady()) { socket.emit("agentLog", { type: "warn", text: "المتصفح غير جاهز" }); return; }
+    await browserAgent.solveCaptchaAuto((event, data) => socket.emit(event, data));
+  });
+
   socket.on("userMouseDown",   async (d: { x: number; y: number }) => {
     console.log(`[click] x=${d.x} y=${d.y}`);
     if (browserAgent.isReady()) await browserAgent.userMouseDown(d.x, d.y).catch(() => {});

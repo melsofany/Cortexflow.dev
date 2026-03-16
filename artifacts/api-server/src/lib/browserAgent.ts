@@ -1,4 +1,5 @@
 import { chromium, Browser, BrowserContext, Page } from "playwright";
+import { solveCaptcha } from "./captchaSolver";
 import { EventEmitter } from "events";
 
 const CHROMIUM_PATH = "/nix/store/0n9rl5l9syy808xi9bk4f6dhnfrvhkww-playwright-browsers-chromium/chromium-1080/chrome-linux/chrome";
@@ -164,6 +165,76 @@ class BrowserAgent extends EventEmitter {
     this.currentUrl = url;
     await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await this.page.waitForTimeout(1000);
+  }
+
+  async detectCaptcha(): Promise<{ found: boolean; siteKey?: string; pageUrl?: string; type?: string }> {
+    if (!this.page) return { found: false };
+    try {
+      const pageUrl = this.page.url();
+      // Check frames for reCAPTCHA
+      const frames = this.page.frames();
+      for (const frame of frames) {
+        const furl = frame.url();
+        if (furl.includes("recaptcha") || furl.includes("fbsbx.com/captcha")) {
+          // Extract sitekey from iframe URL (?k=SITEKEY or &k=SITEKEY)
+          const kMatch = furl.match(/[?&]k=([^&]+)/);
+          const siteKey = kMatch ? kMatch[1] : undefined;
+          return { found: true, siteKey, pageUrl, type: "recaptcha-v2" };
+        }
+      }
+      // Check main page for data-sitekey
+      const siteKey = await this.page.evaluate(() => {
+        const el = document.querySelector('[data-sitekey]') as HTMLElement | null;
+        return el?.getAttribute('data-sitekey') || null;
+      }).catch(() => null);
+      if (siteKey) return { found: true, siteKey, pageUrl, type: "recaptcha-v2" };
+      // Check for hCaptcha
+      const hSiteKey = await this.page.evaluate(() => {
+        const el = document.querySelector('[data-hcaptcha-widget-id],[class*="h-captcha"]') as HTMLElement | null;
+        return el?.getAttribute('data-sitekey') || null;
+      }).catch(() => null);
+      if (hSiteKey) return { found: true, siteKey: hSiteKey, pageUrl, type: "hcaptcha" };
+      return { found: false };
+    } catch {
+      return { found: false };
+    }
+  }
+
+  async solveCaptchaAuto(emit?: (event: string, data: any) => void): Promise<boolean> {
+    const detection = await this.detectCaptcha();
+    if (!detection.found) {
+      console.log("[BrowserAgent] No captcha detected");
+      return false;
+    }
+    if (!detection.siteKey) {
+      console.log("[BrowserAgent] Captcha found but no sitekey extracted");
+      emit?.("agentLog", { type: "warn", text: "⚠️ كابتشا مكتشف لكن لا يمكن استخراج المفتاح — حاول الحل يدوياً" });
+      return false;
+    }
+    console.log(`[BrowserAgent] Captcha: type=${detection.type} sitekey=${detection.siteKey?.slice(0,12)}...`);
+    emit?.("agentLog", { type: "info", text: `🔐 جارٍ حل الكابتشا تلقائياً (${detection.type})...` });
+    const token = await solveCaptcha(detection.siteKey, detection.pageUrl || this.page!.url());
+    if (!token) {
+      emit?.("agentLog", { type: "warn", text: "⚠️ لم يتم حل الكابتشا. تأكد من ضبط TWO_CAPTCHA_API_KEY أو CAPSOLVER_API_KEY" });
+      return false;
+    }
+    // Inject token into page
+    if (!this.page) return false;
+    await this.page.evaluate((t: string) => {
+      const areas = document.querySelectorAll('textarea[name="g-recaptcha-response"], #g-recaptcha-response');
+      areas.forEach((el: any) => { el.value = t; el.style.display = 'block'; });
+      try {
+        const callbacks = Object.values((window as any).___grecaptcha_cfg?.clients || {});
+        for (const c of callbacks as any[]) {
+          const fn = c?.aa?.l?.callback || c?.callback;
+          if (typeof fn === "function") { fn(t); break; }
+        }
+      } catch {}
+    }, token);
+    await this.page.waitForTimeout(2000);
+    await this.captureAndEmit();
+    emit?.("agentLog", { type: "success", text: "✅ تم حقن رمز الكابتشا بنجاح" });
+    return true;
   }
 
   async click(x: number, y: number): Promise<void> {
