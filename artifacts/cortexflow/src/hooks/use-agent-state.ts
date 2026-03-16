@@ -29,12 +29,17 @@ export function useAgentState() {
       queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
     };
 
+    const handleTaskDone = () => {
+      setActiveStep('');
+      invalidateTasks();
+    };
+
     socket.on('log', handleLog);
     socket.on('thinking', handleThinking);
     socket.on('taskUpdate', invalidateTasks);
-    socket.on('taskStart', invalidateTasks);
-    socket.on('taskSuccess', invalidateTasks);
-    socket.on('taskFail', invalidateTasks);
+    socket.on('taskStart', (d: any) => { setActiveStep('OBSERVE'); invalidateTasks(); });
+    socket.on('taskSuccess', handleTaskDone);
+    socket.on('taskFail', handleTaskDone);
     socket.on('taskSubmitted', invalidateTasks);
     socket.on('taskExecuted', invalidateTasks);
 
@@ -43,8 +48,8 @@ export function useAgentState() {
       socket.off('thinking', handleThinking);
       socket.off('taskUpdate', invalidateTasks);
       socket.off('taskStart', invalidateTasks);
-      socket.off('taskSuccess', invalidateTasks);
-      socket.off('taskFail', invalidateTasks);
+      socket.off('taskSuccess', handleTaskDone);
+      socket.off('taskFail', handleTaskDone);
       socket.off('taskSubmitted', invalidateTasks);
       socket.off('taskExecuted', invalidateTasks);
     };

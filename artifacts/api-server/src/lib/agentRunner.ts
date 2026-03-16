@@ -474,29 +474,28 @@ class AgentRunner extends EventEmitter {
         this.emitStep(taskId, "ACT", `خطوة ${i}: ${action} → ${param}`);
 
         if (action === "done") {
-          // تحقق حقيقي: انتظر ثم تحقق من وجود أخطاء أو بقاء في نفس الصفحة
           await sleep(1500);
           const currentUrl = await browserAgent.getCurrentUrl();
           const pageErrors = await browserAgent.detectErrors();
           const pageContent = await browserAgent.getPageContent();
+          const pageContentL = pageContent.toLowerCase();
 
-          // اكتشاف مؤشرات النجاح الحقيقي
-          const successKeywords = ["تهانينا", "congratulations", "welcome", "مرحباً", "تم التسجيل", "تم الإنشاء", "تحقق", "بريد", "inbox", "home", "feed", "success"];
-          const hasSuccess = successKeywords.some(k => pageContent.toLowerCase().includes(k.toLowerCase()));
+          // مؤشرات النجاح
+          const SUCCESS_KW = ["congratulations","welcome","مرحباً","مرحبا","تم التسجيل","تم الإنشاء","successfully","تحقق من بريدك","check your email","verify","inbox","home","feed","dashboard","newsfeed","تم إنشاء"];
+          const FORM_KW    = ["create new account","إنشاء حساب","sign up","register","create account","انشئ حساباً","انشاء حساب"];
 
-          // اكتشاف مؤشرات الفشل (لا تزال على نفس الصفحة)
-          const stillOnForm = pageContent.toLowerCase().includes("create new account") || pageContent.toLowerCase().includes("إنشاء حساب جديد");
+          const hasSuccess  = SUCCESS_KW.some(k => pageContentL.includes(k.toLowerCase()));
+          const stillOnForm = FORM_KW.some(k => pageContentL.includes(k.toLowerCase()));
+          const urlChanged  = currentUrl !== (targetUrl || "") && !currentUrl.includes("/reg") && !currentUrl.includes("signup") && !currentUrl.includes("register");
 
           if (pageErrors.length > 0) {
-            // هناك أخطاء ظاهرة — لا تقبل done
             const errText = pageErrors.join(" | ");
             this.emitStep(taskId, "ERR", `⚠️ لم تكتمل المهمة — أخطاء: ${errText}`);
-            history.push({ role: "user", content: `تحذير: طلبت done لكن توجد أخطاء في الصفحة: "${errText}"\nURL الحالي: ${currentUrl}\nيجب تصحيح الأخطاء أولاً باستخدام ask أو fill قبل المتابعة.` });
+            history.push({ role: "user", content: `تحذير: طلبت done لكن توجد أخطاء في الصفحة:\n"${errText}"\nURL الحالي: ${currentUrl}\nصحّح الأخطاء أولاً باستخدام ask أو fill.` });
             continue;
-          } else if (stillOnForm && !hasSuccess) {
-            // لا تزال على نفس الصفحة بدون رسالة نجاح — استمر
-            this.emitStep(taskId, "ACT", `⚠️ لا تزال على نفس الصفحة — تحقق من اكتمال العملية`);
-            history.push({ role: "user", content: `تحذير: طلبت done لكن الصفحة لم تتغير (لا تزال على نموذج التسجيل).\nURL الحالي: ${currentUrl}\nإما أن هناك أخطاء غير ظاهرة أو أن الزر لم يُضغط. تابع التنفيذ.` });
+          } else if (stillOnForm && !hasSuccess && !urlChanged) {
+            this.emitStep(taskId, "WARN", `⚠️ النموذج لا يزال ظاهراً — لم تكتمل المهمة بعد`);
+            history.push({ role: "user", content: `تحذير: طلبت done لكن النموذج لا يزال ظاهراً والصفحة لم تتغير.\nURL الحالي: ${currentUrl}\nتأكد من:\n1. ملء جميع الحقول المطلوبة\n2. الضغط على زر الإرسال/التسجيل\n3. الانتظار للتحقق من التغيير` });
             continue;
           } else {
             finalResult = param || "اكتملت المهمة بنجاح";
