@@ -539,7 +539,8 @@ class AgentRunner extends EventEmitter {
       return;
     }
 
-    const useOllama = ollamaClient.isAvailable();
+    // حلقة التنفيذ تعمل إذا توفر DeepSeek أو Ollama (ليس فقط Ollama)
+    const useOllama = ollamaClient.isAvailable() || !!getDeepSeekKey();
 
     // ── التحليل العميق بـ DeepSeek (مثل تحليل الشات) ──────────────────
     const targetUrlEarly = extractUrl(task.description) || learningEngine.getLearnedUrl(task.description) || task.url;
@@ -581,7 +582,11 @@ class AgentRunner extends EventEmitter {
     } else {
       if (targetUrl) {
         this.emitStep(taskId, "ACT", `خطوة 0: الانتقال إلى ${targetUrl}`);
-        await browserAgent.navigate(targetUrl).catch(() => {});
+        try {
+          await browserAgent.navigate(targetUrl);
+        } catch (navErr: any) {
+          this.emitStep(taskId, "WARN", `⚠️ تعذّر التنقل إلى ${targetUrl}: ${navErr?.message || navErr}\nسيحاول الوكيل مجدداً أو يبحث عن بديل.`);
+        }
         await browserAgent.captureNow();
         await sleep(1200);
       }
@@ -867,15 +872,28 @@ class AgentRunner extends EventEmitter {
     const duration = Date.now() - start;
     modelSelector.recordResult(model, "browser", true, duration / 1000, 0.7);
 
-    // ── التعلم من نجاح المهمة ────────────────────────────────────────────
+    // ── التعلم من نجاح المهمة (فقط عند نجاح حقيقي) ──────────────────────
     try {
       const finalUrl = await browserAgent.getCurrentUrl();
-      learningEngine.learnFromSuccessfulNavigation(task.description, finalUrl);
-      const taskData = taskStore.getTask(taskId);
-      const actionSteps = (taskData?.steps || []).slice(0, 8).map((s: any) => `${s.step}: ${s.content.substring(0, 60)}`);
-      learningEngine.learnStrategy(task.description, actionSteps, true);
-      learningEngine.recordTaskOutcome(true);
-      this.emitStep(taskId, "THINK", `🧠 تعلّمت من هذه المهمة وحفظت الاستراتيجية الناجحة`);
+      // لا تسجّل نجاحاً إذا انتهينا بصفحة فارغة أو خطأ
+      const isRealSuccess = finalUrl &&
+        finalUrl !== "about:blank" &&
+        finalUrl !== "" &&
+        !finalUrl.startsWith("data:") &&
+        !verifyResult.includes("تعذّر") &&
+        !verifyResult.includes("فشل");
+      if (isRealSuccess) {
+        learningEngine.learnFromSuccessfulNavigation(task.description, finalUrl);
+        const taskData = taskStore.getTask(taskId);
+        const actionSteps = (taskData?.steps || []).slice(0, 8).map((s: any) => `${s.step}: ${s.content.substring(0, 60)}`);
+        learningEngine.learnStrategy(task.description, actionSteps, true);
+        learningEngine.recordTaskOutcome(true);
+        this.emitStep(taskId, "THINK", `🧠 تعلّمت من هذه المهمة وحفظت الاستراتيجية الناجحة`);
+      } else {
+        // سجّل الفشل حتى لا يُكرر الوكيل الخطأ
+        learningEngine.recordTaskOutcome(false);
+        this.emitStep(taskId, "WARN", `⚠️ المهمة لم تكتمل بنجاح — لم يتم حفظ الاستراتيجية`);
+      }
     } catch {}
 
     techIntelligence.onTaskEnd(taskId, true);
