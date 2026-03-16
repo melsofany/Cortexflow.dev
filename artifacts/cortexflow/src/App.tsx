@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { io, Socket } from 'socket.io-client';
 import {
   Send, Bot, User, Brain, Info, CheckCircle2,
@@ -145,7 +147,26 @@ const MessageItem = memo(({ msg, tasks, onResume }: {
               <Loader2 size={9} className="animate-spin"/> يفكر الوكيل...
             </div>
           )}
-          <div className="whitespace-pre-wrap">{msg.text}</div>
+          {isUser || isThinking ? (
+            <div className="whitespace-pre-wrap">{msg.text}</div>
+          ) : (
+            <div className="prose prose-invert prose-sm max-w-none
+              prose-headings:text-slate-100 prose-headings:font-bold prose-headings:mb-2 prose-headings:mt-3
+              prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
+              prose-p:text-slate-200 prose-p:leading-relaxed prose-p:my-1.5
+              prose-strong:text-white prose-strong:font-semibold
+              prose-em:text-slate-300
+              prose-ul:my-1.5 prose-ul:space-y-0.5 prose-li:text-slate-200 prose-li:my-0.5
+              prose-ol:my-1.5 prose-ol:space-y-0.5
+              prose-code:bg-slate-800 prose-code:text-violet-300 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+              prose-pre:bg-[#0d0d14] prose-pre:border prose-pre:border-slate-700/50 prose-pre:rounded-xl prose-pre:my-2 prose-pre:p-3 prose-pre:overflow-x-auto
+              prose-blockquote:border-indigo-500/50 prose-blockquote:bg-indigo-500/5 prose-blockquote:text-slate-300 prose-blockquote:rounded-r-lg prose-blockquote:py-1
+              prose-table:text-xs prose-th:text-slate-300 prose-th:bg-slate-800/60 prose-td:text-slate-300 prose-td:border-slate-700/40
+              prose-hr:border-slate-700/40
+              prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+            </div>
+          )}
           {msg.status === 'running' && (
             <div className="mt-2 flex items-center gap-1.5 text-[11px] text-indigo-400">
               <Loader2 size={11} className="animate-spin"/> جارٍ التنفيذ...
