@@ -215,11 +215,19 @@ class LearningEngine {
     const hints: string[] = [];
     const strategy = this.getRelevantStrategy(taskDesc);
     if (strategy && strategy.successCount > 0) {
-      hints.push(`💡 استراتيجية ناجحة مشابهة (نجحت ${strategy.successCount} مرة):\n${strategy.steps.slice(0, 3).map(s => `  - ${s}`).join("\n")}`);
-    }
-    const learnedUrl = this.getLearnedUrl(taskDesc);
-    if (learnedUrl) {
-      hints.push(`🔗 رابط تعلّمته سابقاً: ${learnedUrl}`);
+      // فلترة الخطوات المضللة (التنقل لمواقع خاطئة)
+      const filteredSteps = strategy.steps
+        .slice(0, 3)
+        .filter(s => {
+          const lower = s.toLowerCase();
+          // استبعد خطوات التنقل لمواقع عامة قد تكون خاطئة
+          if (lower.includes("web.whatsapp.com") || lower.includes("whatsapp.com/")) return false;
+          if (lower.includes("facebook.com") && !lower.includes("developers.facebook.com")) return false;
+          return true;
+        });
+      if (filteredSteps.length > 0) {
+        hints.push(`💡 استراتيجية مشابهة:\n${filteredSteps.map(s => `  - ${s}`).join("\n")}`);
+      }
     }
     return hints.join("\n");
   }

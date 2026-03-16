@@ -1,6 +1,90 @@
 {
   "snapshots": [
     {
+      "timestamp": "2026-03-16T17:55:40.242Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1806,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:55:40.228Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:55:40.230Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:55:40.242Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-16T17:55:40.242Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:55:40.242Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
+      "timestamp": "2026-03-16T17:53:05.364Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1812,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:53:05.345Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:53:05.348Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-16T17:53:05.364Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-16T17:53:05.364Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-16T17:53:05.364Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
       "timestamp": "2026-03-16T17:48:05.140Z",
       "metrics": [
         {
@@ -2537,7 +2621,7 @@
     "browser": true,
     "agentService": true
   },
-  "lastCheck": "2026-03-16T17:48:05.140Z",
+  "lastCheck": "2026-03-16T17:55:40.242Z",
   "alerts": [
     {
       "level": "warn",

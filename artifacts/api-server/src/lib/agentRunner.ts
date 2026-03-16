@@ -136,11 +136,17 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - أو استخدم navigate للانتقال مباشرة إلى صفحة تسجيل الدخول
 - لا تستخدم wait أكثر من مرة واحدة إذا لم تتغير الصفحة بعدها
 
+━━━ قواعد المواقع المعروفة ━━━
+- واتساب للأعمال/Business API/WhatsApp Cloud API: الموقع الصحيح هو developers.facebook.com وليس web.whatsapp.com أو business.whatsapp.com
+- لإنشاء تطبيق واتساب تجاري للحصول على API: ابدأ دائماً من https://developers.facebook.com/ وانتقل منه للمنتجات
+- إذا كنت على developers.facebook.com لا تنتقل إلى web.whatsapp.com أو business.whatsapp.com — الكل يُدار من موقع المطورين
+
 القواعد الصارمة:
 - سطر واحد فقط، لا شرح ولا تعليق
 - للقوائم [قائمة] استخدم select وليس fill أو click
 - كل أسماء الحقول والأزرار مصدرها هيكل الصفحة فقط
-- لا تكرر نفس الإجراء 3 مرات متتالية بدون تغيير`;
+- لا تكرر نفس الإجراء 3 مرات متتالية بدون تغيير
+- لا تنتقل إلى موقع خاطئ بناءً على تخمين — اتبع هيكل الصفحة`;
 
 const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً. استخدم Markdown لتنسيق ردودك (عناوين، قوائم، كود، جداول).`;
 
@@ -1072,10 +1078,20 @@ function extractUrl(text: string): string | null {
     "واتساب": "https://web.whatsapp.com", "whatsapp": "https://web.whatsapp.com",
     "ويكيبيديا": "https://ar.wikipedia.org", "wikipedia": "https://en.wikipedia.org",
     "ستاك اوفرفلو": "https://stackoverflow.com", "stackoverflow": "https://stackoverflow.com",
-    "ميتا للمطورين": "https://developers.facebook.com/", "meta developer": "https://developers.facebook.com/",
-    "meta for developers": "https://developers.facebook.com/", "developers.facebook": "https://developers.facebook.com/",
-    "ميتا مطورين": "https://developers.facebook.com/", "موقع ميتا الخاص بالمطورين": "https://developers.facebook.com/",
+    "ميتا للمطورين": "https://developers.facebook.com/",
+    "ميتا الخاص بالمطورين": "https://developers.facebook.com/",
+    "موقع ميتا الخاص بالمطورين": "https://developers.facebook.com/",
+    "ميتا مطورين": "https://developers.facebook.com/",
+    "ميتا developer": "https://developers.facebook.com/",
+    "meta developer": "https://developers.facebook.com/",
+    "meta for developers": "https://developers.facebook.com/",
+    "developers.facebook": "https://developers.facebook.com/",
     "whatsapp cloud api": "https://developers.facebook.com/docs/whatsapp/cloud-api/",
+    "whatsapp business api": "https://developers.facebook.com/docs/whatsapp/",
+    "واتساب بيزنس api": "https://developers.facebook.com/docs/whatsapp/",
+    "واتساب للأعمال api": "https://developers.facebook.com/docs/whatsapp/",
+    "إنشاء تطبيق واتساب": "https://developers.facebook.com/",
+    "انشاء تطبيق واتساب": "https://developers.facebook.com/",
     "whatsapp business": "https://business.whatsapp.com/", "واتساب بيزنس": "https://business.whatsapp.com/",
   };
   const lower = text.toLowerCase();
