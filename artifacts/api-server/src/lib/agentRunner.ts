@@ -127,6 +127,12 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - أو استخدم الاسم مباشرة إذا ظهر: select PARAM: day=15
 - الخيارات المتاحة مذكورة في الهيكل — اختر أقرب قيمة مطابقة
 
+━━━ قاعدة click وأزرار تسجيل الدخول ━━━
+- النقر على الأزرار: استخدم النص الإنجليزي كما يظهر في الصفحة (Log In, Login, Continue, Next)
+- إذا فشل click → استخدم فوراً: key PARAM: Enter (يرسل النموذج مباشرة)
+- بعد ملء حقلي البريد وكلمة المرور → جرّب key PARAM: Enter مباشرة بدل click
+- الأزرار على Facebook/Meta غالباً بالإنجليزية: "Log In" وليس "تسجيل الدخول"
+
 ━━━ قاعدة ask ━━━
 - استخدم ask للبيانات الحساسة التي لا يمكنك معرفتها: كلمة المرور، البريد، الهاتف
 - بعد حصولك على البيانات تابع التنفيذ فوراً
@@ -706,6 +712,8 @@ class AgentRunner extends EventEmitter {
 
         if (sameUrlCount >= 4) {
           this.emitStep(taskId, "WARN", `⚠️ علق الوكيل في نفس الصفحة (${sameUrlCount} مرات). سيجرّب نهجاً مختلفاً...`);
+          const currentStruct = await browserAgent.getPageStructure();
+          const hasForm = currentStruct.includes("[حقل]");
           history.push({
             role: "user",
             content: [
@@ -713,11 +721,15 @@ class AgentRunner extends EventEmitter {
               `الرابط الحالي: ${url}`,
               ``,
               `يجب أن تغير نهجك الآن — اختر واحداً مما يلي:`,
-              `1. إذا كانت هناك حقول مخفية أو محملة ديناميكياً → جرّب: wait PARAM: waiting ثم أعد المحاولة`,
-              `2. إذا كانت هناك عقبة واضحة → اطلب مساعدة: ask PARAM: وصف العقبة`,
-              `3. إذا كانت المهمة مستحيلة في هذه الصفحة → أخبر المستخدم: done PARAM: وصف سبب التعذّر`,
-              `4. إذا كنت تحتاج بيانات اعتماد → اطلبها: ask PARAM: أحتاج اسم المستخدم وكلمة المرور`,
-              `لا تكرر نفس الإجراء مرة أخرى.`,
+              hasForm
+                ? `1. إذا ملأت الحقول بالفعل → اضغط Enter لإرسال النموذج: key PARAM: Enter`
+                : `1. إذا كانت الصفحة تحتاج وقتاً للتحميل → جرّب: wait PARAM: waiting`,
+              `2. إذا كان النقر على الزر لا يعمل → جرّب ضغط Enter مباشرة: key PARAM: Enter`,
+              `3. إذا كان الزر باللغة الإنجليزية → جرّب: click PARAM: Log In أو click PARAM: Login أو click PARAM: Continue`,
+              `4. إذا كنت تحتاج بيانات اعتماد → اطلبها: ask PARAM: أحتاج البريد الإلكتروني وكلمة المرور`,
+              `5. إذا كان هناك تحقق إضافي مطلوب (CAPTCHA، تأكيد هاتف) → ask PARAM: وصف ما تراه`,
+              `هيكل الصفحة الحالي للمساعدة:\n${currentStruct.substring(0, 500)}`,
+              `لا تكرر نفس الإجراء الذي فشل مرة أخرى.`,
             ].join("\n"),
           });
           sameUrlCount = 0;
@@ -1203,7 +1215,14 @@ async function executeAction(
       return { success: true };
     case "click": {
       const clicked = await browserAgent.clickByText(param);
-      if (!clicked) return { success: false, error: `لم يُعثر على عنصر بالنص: "${param}"` };
+      if (!clicked) {
+        // احتياطي: اضغط Enter — يعمل لمعظم نماذج تسجيل الدخول
+        try {
+          await browserAgent.pressKey("Enter");
+          return { success: true };
+        } catch { }
+        return { success: false, error: `لم يُعثر على عنصر بالنص: "${param}" — جرّب: key PARAM: Enter` };
+      }
       return { success: true };
     }
     case "fill": {

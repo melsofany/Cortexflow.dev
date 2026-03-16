@@ -254,20 +254,65 @@ class BrowserAgent extends EventEmitter {
 
   async clickByText(text: string): Promise<boolean> {
     if (!this.page) return false;
-    try {
-      const el = this.page.getByText(text, { exact: false }).first();
-      await el.click({ timeout: 5000 });
-      await this.page.waitForTimeout(1000);
-      return true;
-    } catch {
+
+    const tryClick = async (loc: import("playwright").Locator): Promise<boolean> => {
       try {
-        await this.page.click(`text="${text}"`, { timeout: 5000 });
-        await this.page.waitForTimeout(1000);
+        await loc.first().waitFor({ state: "visible", timeout: 3000 });
+        await loc.first().click({ timeout: 4000 });
+        await this.page!.waitForTimeout(1200);
         return true;
-      } catch {
-        return false;
-      }
+      } catch { return false; }
+    };
+
+    // ابحث في كل الإطارات (الرئيسي + iframes)
+    const frames = [this.page.mainFrame(), ...this.page.frames().filter(f => f !== this.page!.mainFrame())];
+
+    for (const frame of frames) {
+      const fLoc = (sel: string) => frame.locator(sel);
+
+      // 1. النص الظاهر (getByRole button/link)
+      if (await tryClick(frame.getByRole("button", { name: text, exact: false }))) return true;
+      if (await tryClick(frame.getByRole("link",   { name: text, exact: false }))) return true;
+
+      // 2. النص المرئي العام
+      if (await tryClick(frame.getByText(text, { exact: false }))) return true;
+
+      // 3. value= (أزرار submit التقليدية <input type=submit value="...">)
+      if (await tryClick(fLoc(`input[type="submit"][value*="${text}"]`))) return true;
+      if (await tryClick(fLoc(`button[name*="${text}"]`))) return true;
+
+      // 4. aria-label
+      if (await tryClick(fLoc(`[aria-label*="${text}"]`))) return true;
+
+      // 5. النص الجزئي (text= selector)
+      try {
+        await frame.click(`text=${text}`, { timeout: 3000 });
+        await this.page!.waitForTimeout(1200);
+        return true;
+      } catch { }
     }
+
+    // 6. احتياطي: إذا كان النص يدل على تسجيل الدخول — جرّب أي زر submit في الصفحة
+    const loginKeywords = ["log in", "login", "sign in", "signin", "تسجيل الدخول", "دخول", "submit", "إرسال", "continue", "متابعة", "next", "التالي"];
+    const isLoginLike = loginKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));
+    if (isLoginLike) {
+      for (const frame of frames) {
+        const fLoc = (sel: string) => frame.locator(sel);
+        if (await tryClick(fLoc(`button[type="submit"]`))) return true;
+        if (await tryClick(fLoc(`input[type="submit"]`))) return true;
+        if (await tryClick(fLoc(`[data-testid*="login"]`))) return true;
+        if (await tryClick(fLoc(`[id*="login"]`))) return true;
+        if (await tryClick(fLoc(`[class*="login"]`))) return true;
+      }
+      // آخر محاولة: اضغط Enter في الصفحة
+      try {
+        await this.page.keyboard.press("Enter");
+        await this.page.waitForTimeout(1200);
+        return true;
+      } catch { }
+    }
+
+    return false;
   }
 
   async clickBySelector(selector: string): Promise<boolean> {
