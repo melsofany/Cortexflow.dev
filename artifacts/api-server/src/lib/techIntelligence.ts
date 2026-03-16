@@ -664,8 +664,22 @@ class TechIntelligenceSystem {
       }
     }, 12 * 60 * 60 * 1000);
 
-    // فحص فوري عند البدء
-    this.monitor.checkHealth().catch(console.error);
+    // في السحابة: إرسال ping لإيقاظ خدمة الوكيل قبل فحص الصحة
+    const isCloud = process.env.NODE_ENV === "production" || !!process.env.RENDER;
+    const AGENT_SERVICE = process.env.AGENT_SERVICE_URL || "http://localhost:8090";
+    if (isCloud) {
+      console.log("[TechIntelligence] ☁️ Cloud mode: إيقاظ خدمة الوكيل...");
+      axios.get(`${AGENT_SERVICE}/health`, { timeout: 60000 })
+        .then(() => console.log("[TechIntelligence] ✅ خدمة الوكيل مستيقظة"))
+        .catch(() => console.log("[TechIntelligence] ⚠️ خدمة الوكيل لم تستجب للإيقاظ"));
+      // تأخير الفحص الأول 35 ثانية لإعطاء الوقت للإيقاظ
+      setTimeout(() => {
+        this.monitor.checkHealth().catch(console.error);
+      }, 35 * 1000);
+    } else {
+      // فحص فوري عند البدء في بيئة التطوير
+      this.monitor.checkHealth().catch(console.error);
+    }
 
     // بحث تقني فوري إذا لم يحدث مؤخراً (بعد 60 ثانية)
     setTimeout(async () => {

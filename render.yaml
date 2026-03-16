@@ -36,9 +36,8 @@ services:
     repo: https://github.com/melsofany/Cortexflow-dev
     branch: master
     buildCommand: >-
-      apt-get update -qq &&
-      (apt-get install -y chromium chromium-driver || apt-get install -y chromium-browser || true) &&
-      pip install -r artifacts/agent-service/requirements.txt
+      pip install -r artifacts/agent-service/requirements.txt &&
+      playwright install chromium --with-deps
     startCommand: "python artifacts/agent-service/main.py"
     healthCheckPath: /health
     plan: starter
