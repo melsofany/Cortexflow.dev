@@ -10,7 +10,7 @@ import { multiAgentOrchestrator } from "./multiAgent.js";
 import { learningEngine } from "./learningEngine.js";
 import { techIntelligence } from "./techIntelligence.js";
 
-const MAX_ITERATIONS = 20;
+const MAX_ITERATIONS = 50;
 const MAX_RETRIES    = 2;
 const AGENT_SERVICE  = process.env.AGENT_SERVICE_URL || "http://localhost:8090";
 
@@ -82,7 +82,7 @@ async function smartChat(
 
 // ── نظام Prompt المتخصص ────────────────────────────────────────────────────
 
-const ACTION_SYSTEM_PROMPT = `أنت وكيل أتمتة متصفح. تتحكم في متصفح حقيقي.
+const ACTION_SYSTEM_PROMPT = `أنت وكيل أتمتة متصفح محترف. تتحكم في متصفح حقيقي وتُكمل المهام بالكامل.
 استجب بسطر واحد فقط بهذا التنسيق الثابت:
 ACTION: <الإجراء> | PARAM: <القيمة>
 
@@ -95,11 +95,18 @@ ACTION: <الإجراء> | PARAM: <القيمة>
   key       - ضغط مفتاح: PARAM: Enter أو Tab أو Escape
   scroll    - التمرير: PARAM: up أو down
   wait      - انتظار تحميل الصفحة: PARAM: waiting
-  done      - المهمة مكتملة (بعد التحقق الفعلي): PARAM: وصف الإنجاز
+  done      - المهمة مكتملة تماماً (بعد التحقق الفعلي من كل المعايير): PARAM: وصف الإنجاز
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-المبدأ الأساسي: اقرأ الصفحة — لا تتخمن
+🎯 المبدأ الجوهري: أكمل المهمة حتى النهاية
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+أنت مُكلَّف بتنفيذ المهمة بالكامل — ليس مجرد الوصول للموقع.
+- الوصول للموقع = البداية فقط، ليس الإنجاز
+- يجب تنفيذ كل خطوة في الخطة المعطاة لك حتى تكتمل المهمة حقاً
+- إذا المهمة تقول "أنشئ تطبيقاً" → يجب أن يُنشأ التطبيق فعلاً
+- إذا المهمة تقول "احصل على API" → يجب أن تظهر بيانات الـ API
+- لا تقل done حتى تتحقق من كل معيار في قائمة معايير الاكتمال
+
 في كل خطوة تحصل على "هيكل الصفحة الحالية". هذا الهيكل يُظهر:
   - [حقل] اسم الحقل من الصفحة مباشرةً → استخدمه في fill
   - [قائمة#N] رقم القائمة وخياراتها → استخدم nth:N في select
@@ -107,8 +114,8 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 
 القاعدة الذهبية:
   1. انظر إلى هيكل الصفحة المُعطى لك
-  2. حدّد اسم الحقل/القائمة/الزر من الهيكل
-  3. استخدم ذلك الاسم تماماً بدون تخمين أو اختراع
+  2. حدّد الخطوة التالية من خطة DeepSeek
+  3. نفّذ الخطوة بناءً على ما تراه في هيكل الصفحة
 
 ━━━ قاعدة fill ━━━
 - استخدم القيمة في name= أو id= من هيكل الصفحة
@@ -121,32 +128,30 @@ ACTION: <الإجراء> | PARAM: <القيمة>
 - الخيارات المتاحة مذكورة في الهيكل — اختر أقرب قيمة مطابقة
 
 ━━━ قاعدة ask ━━━
-- استخدم ask قبل fill للبيانات الحساسة: كلمة المرور، البريد، الهاتف
-- مثال: ask PARAM: أدخل كلمة المرور
+- استخدم ask للبيانات الحساسة التي لا يمكنك معرفتها: كلمة المرور، البريد، الهاتف
+- بعد حصولك على البيانات تابع التنفيذ فوراً
 
-━━━ قاعدة done ━━━
-- لا تستخدم done إلا بعد:
-  * تغيّر URL إلى صفحة نجاح/تأكيد
-  * أو ظهور رسالة نجاح صريحة في الصفحة
-- إذا بقيت على نفس الصفحة → يوجد خطأ لم يُصحَّح بعد
+━━━ قاعدة done — مهم جداً ━━━
+- done يعني أن المهمة اكتملت بالكامل — كل الخطوات، كل المعايير
+- لا تستخدم done لأنك وصلت للصفحة الرئيسية للموقع
+- لا تستخدم done لأنك تسجّلت دخول فقط — الدخول وسيلة وليس هدفاً
+- استخدم done فقط عندما تتحقق أن كل ما طُلب في المهمة تحقق فعلاً
+- إذا شككت → اسأل نفسك: "هل المهمة الأصلية اكتملت 100%؟" إذا لا → تابع
 
 ━━━ قاعدة الصفحات بدون حقول إدخال ━━━
-- إذا ظهر "لا توجد حقول إدخال" في الهيكل → الصفحة محملة لكنها صفحة تنقل
-- الحل: استخدم click على زر/رابط "Log In" أو "تسجيل الدخول" أو ما يشابهه
-- أو استخدم navigate للانتقال مباشرة إلى صفحة تسجيل الدخول
-- لا تستخدم wait أكثر من مرة واحدة إذا لم تتغير الصفحة بعدها
+- إذا ظهر "لا توجد حقول إدخال" → الصفحة صفحة تنقل أو محتوى
+- الحل: انقر على الزر/الرابط المناسب أو انتقل للصفحة الصحيحة
+- لا تستخدم wait أكثر من مرة واحدة إذا لم تتغير الصفحة
 
 ━━━ قواعد المواقع المعروفة ━━━
-- واتساب للأعمال/Business API/WhatsApp Cloud API: الموقع الصحيح هو developers.facebook.com وليس web.whatsapp.com أو business.whatsapp.com
-- لإنشاء تطبيق واتساب تجاري للحصول على API: ابدأ دائماً من https://developers.facebook.com/ وانتقل منه للمنتجات
-- إذا كنت على developers.facebook.com لا تنتقل إلى web.whatsapp.com أو business.whatsapp.com — الكل يُدار من موقع المطورين
+- واتساب للأعمال/Business API/WhatsApp Cloud API: الموقع الصحيح هو developers.facebook.com
+- لإنشاء تطبيق واتساب تجاري للحصول على API: ابدأ من https://developers.facebook.com/
 
 القواعد الصارمة:
 - سطر واحد فقط، لا شرح ولا تعليق
 - للقوائم [قائمة] استخدم select وليس fill أو click
 - كل أسماء الحقول والأزرار مصدرها هيكل الصفحة فقط
-- لا تكرر نفس الإجراء 3 مرات متتالية بدون تغيير
-- لا تنتقل إلى موقع خاطئ بناءً على تخمين — اتبع هيكل الصفحة`;
+- لا تكرر نفس الإجراء 3 مرات متتالية بدون تغيير`;
 
 const ARABIC_RULE = `\nقاعدة أساسية: جميع ردودك وتفكيرك يجب أن يكون باللغة العربية حصراً. استخدم Markdown لتنسيق ردودك (عناوين، قوائم، كود، جداول).`;
 
@@ -465,15 +470,16 @@ class AgentRunner extends EventEmitter {
   }
 
   // ── التحليل العميق للمهمة قبل التنفيذ (مثل DeepSeek في الشات) ─────────
-  private async deepAnalyzeTask(taskDescription: string, targetUrl: string | null): Promise<{ analysis: string; steps: string[]; needsFromUser: string[]; targetUrl: string | null }> {
+  private async deepAnalyzeTask(taskDescription: string, targetUrl: string | null): Promise<{ analysis: string; steps: string[]; needsFromUser: string[]; targetUrl: string | null; completionCriteria: string[] }> {
     const DEEP_ANALYSIS_PROMPT = `أنت CortexFlow، وكيل ذكاء اصطناعي متقدم. مهمتك تحليل المهمة التالية بعمق كامل قبل التنفيذ.
 
 قم بما يلي:
 1. **فهم المهمة**: ما الهدف النهائي الدقيق؟
 2. **تحديد الموقع**: ما الرابط الصحيح للبدء؟
 3. **تحليل المتطلبات**: ما الذي يحتاجه المستخدم لإكمال هذه المهمة (حسابات، بيانات اعتماد، معلومات)؟
-4. **خطة التنفيذ**: اذكر الخطوات بدقة وتسلسل منطقي
+4. **خطة التنفيذ**: اذكر الخطوات بدقة وتسلسل منطقي — كن دقيقاً وشاملاً
 5. **ما يجب طلبه من المستخدم**: إذا كانت المهمة تحتاج بيانات حساسة (كلمة مرور، رقم هاتف، الخ)
+6. **معايير الاكتمال**: ما الذي يثبت أن المهمة اكتملت فعلاً؟ (ليس مجرد الوصول للموقع)
 
 تنسيق الإجابة (JSON فقط):
 {
@@ -481,7 +487,8 @@ class AgentRunner extends EventEmitter {
   "targetUrl": "الرابط الصحيح للبدء",
   "steps": ["الخطوة 1", "الخطوة 2", ...],
   "needsFromUser": ["ما يجب طلبه من المستخدم قبل البدء"],
-  "warnings": ["تحذيرات مهمة"]
+  "warnings": ["تحذيرات مهمة"],
+  "completionCriteria": ["ما الدليل الملموس على اكتمال المهمة — مثل: ظهور App ID، أو رسالة نجاح، أو الوصول لصفحة بعينها"]
 }`;
 
     try {
@@ -500,22 +507,25 @@ class AgentRunner extends EventEmitter {
           if (rawUrl.startsWith("http")) dsUrl = rawUrl;
           else if (rawUrl.length > 3) dsUrl = "https://" + rawUrl;
         }
+        const criteria: string[] = parsed.completionCriteria || [];
         return {
           analysis: [
             `## 🧠 فهم المهمة\n${parsed.understanding || ""}`,
             dsUrl ? `\n## 🌐 الرابط الهدف\n${dsUrl}` : "",
             `\n## 📋 خطوات التنفيذ\n${(parsed.steps || []).map((s: string, i: number) => `${i+1}. ${s}`).join("\n")}`,
+            criteria.length ? `\n## ✅ معايير الاكتمال\n${criteria.map((s: string) => `- ${s}`).join("\n")}` : "",
             parsed.needsFromUser?.length ? `\n## ❓ مطلوب من المستخدم\n${(parsed.needsFromUser as string[]).map((s: string) => `- ${s}`).join("\n")}` : "",
             parsed.warnings?.length ? `\n## ⚠️ تحذيرات\n${(parsed.warnings as string[]).map((s: string) => `- ${s}`).join("\n")}` : "",
           ].filter(Boolean).join(""),
           steps: parsed.steps || [],
           needsFromUser: parsed.needsFromUser || [],
-          targetUrl: dsUrl,  // الرابط الذي حدده DeepSeek ← أولوية قصوى
+          targetUrl: dsUrl,
+          completionCriteria: criteria,
         };
       }
     } catch {}
 
-    return { analysis: `تحليل المهمة: "${taskDescription}"`, steps: [], needsFromUser: [], targetUrl: null };
+    return { analysis: `تحليل المهمة: "${taskDescription}"`, steps: [], needsFromUser: [], targetUrl: null, completionCriteria: [] };
   }
 
   // ── تنفيذ مهام المتصفح ─────────────────────────────────────────────────
@@ -553,7 +563,7 @@ class AgentRunner extends EventEmitter {
     // ── التحليل العميق بـ DeepSeek (مثل تحليل الشات) ──────────────────
     const extractedUrl = extractUrl(task.description) || learningEngine.getLearnedUrl(task.description) || task.url;
     this.emitStep(taskId, "THINK", `🔍 DeepSeek يحلل المهمة بعمق...`);
-    const { analysis: deepAnalysis, steps: plannedSteps, needsFromUser, targetUrl: deepSeekUrl } = await this.deepAnalyzeTask(task.description, extractedUrl);
+    const { analysis: deepAnalysis, steps: plannedSteps, needsFromUser, targetUrl: deepSeekUrl, completionCriteria } = await this.deepAnalyzeTask(task.description, extractedUrl);
     this.emitStep(taskId, "THINK", deepAnalysis);
 
     // ▶ رابط DeepSeek يحظى بأولوية قصوى — فهو يفهم السياق أفضل من المطابقة النصية
@@ -632,15 +642,21 @@ class AgentRunner extends EventEmitter {
         : "";
 
       // خطة DeepSeek العميقة تُضاف كسياق دائم في حلقة التنفيذ
-      const deepPlanContext = plannedSteps.length > 0
-        ? [
-            ``,
-            `═══ الخطة المفصلة (حللها DeepSeek) ═══`,
-            plannedSteps.map((s, i) => `${i+1}. ${s}`).join("\n"),
-            `═══════════════════════════════════════`,
-            `اتبع هذه الخطة خطوة بخطوة. لا تتجاوز خطوة إلا بعد إتمامها.`,
-          ].join("\n")
-        : "";
+      const deepPlanContext = [
+        plannedSteps.length > 0 ? [
+          ``,
+          `═══ الخطة المفصلة (حللها DeepSeek) ═══`,
+          plannedSteps.map((s, i) => `${i+1}. ${s}`).join("\n"),
+          `═══════════════════════════════════════`,
+          `اتبع هذه الخطة خطوة بخطوة. لا تتجاوز خطوة إلا بعد إتمامها.`,
+        ].join("\n") : "",
+        completionCriteria.length > 0 ? [
+          ``,
+          `🎯 المهمة تُعتبر مكتملة فقط عندما:`,
+          completionCriteria.map(c => `  ✓ ${c}`).join("\n"),
+          `لا تستخدم done قبل التحقق من هذه المعايير واحداً واحداً.`,
+        ].join("\n") : "",
+      ].filter(Boolean).join("\n");
 
       const history: ChatMessage[] = [
         { role: "system", content: ACTION_SYSTEM_PROMPT },
@@ -710,14 +726,28 @@ class AgentRunner extends EventEmitter {
 
         // في الخطوة الأولى الرسالة مُحضَّرة مسبقاً، من الثانية فصاعداً أضف تحديثات الصفحة
         if (i > 1) {
+          // كل 10 خطوات: أعد تذكير الوكيل بالهدف الكامل ومعايير الاكتمال
+          const periodicReminder = (i % 10 === 0 && (plannedSteps.length > 0 || completionCriteria.length > 0))
+            ? [
+                ``,
+                `═══ تذكير بالهدف (الخطوة ${i}) ═══`,
+                plannedSteps.length > 0 ? `الخطة الكاملة:\n${plannedSteps.map((s, idx) => `${idx+1}. ${s}`).join("\n")}` : ``,
+                completionCriteria.length > 0 ? `المهمة مكتملة فقط عندما:\n${completionCriteria.map(c => `  ✓ ${c}`).join("\n")}` : ``,
+                `الرابط الحالي: ${url}`,
+                `هل وصلت لكل هذه المعايير؟ إذا لا → تابع. إذا نعم → done`,
+                `═══════════════════════════════════`,
+              ].filter(Boolean).join("\n")
+            : "";
+
           const pageState = [
             `─── تحديث الصفحة (الخطوة ${i}) ───`,
             `الرابط الحالي: ${url}`,
             `هيكل الصفحة:`,
             struct,
             `النص المرئي: ${content.substring(0, 400)}`,
+            periodicReminder,
             `الخطوة ${i} من ${MAX_ITERATIONS}: أخرج سطر ACTION واحد فقط.`,
-          ].join("\n");
+          ].filter(Boolean).join("\n");
           history.push({ role: "user", content: pageState });
         }
 
@@ -790,32 +820,68 @@ class AgentRunner extends EventEmitter {
 
         if (action === "done") {
           await sleep(1500);
-          const currentUrl = await browserAgent.getCurrentUrl();
-          const pageErrors = await browserAgent.detectErrors();
-          const pageContent = await browserAgent.getPageContent();
-          const pageContentL = pageContent.toLowerCase();
+          const currentUrl    = await browserAgent.getCurrentUrl();
+          const pageErrors    = await browserAgent.detectErrors();
+          const pageContent   = await browserAgent.getPageContent();
 
-          // مؤشرات النجاح
-          const SUCCESS_KW = ["congratulations","welcome","مرحباً","مرحبا","تم التسجيل","تم الإنشاء","successfully","تحقق من بريدك","check your email","verify","inbox","home","feed","dashboard","newsfeed","تم إنشاء"];
-          const FORM_KW    = ["create new account","إنشاء حساب","sign up","register","create account","انشئ حساباً","انشاء حساب"];
-
-          const hasSuccess  = SUCCESS_KW.some(k => pageContentL.includes(k.toLowerCase()));
-          const stillOnForm = FORM_KW.some(k => pageContentL.includes(k.toLowerCase()));
-          const urlChanged  = currentUrl !== (targetUrl || "") && !currentUrl.includes("/reg") && !currentUrl.includes("signup") && !currentUrl.includes("register");
-
+          // أولاً: تحقق من الأخطاء الظاهرة
           if (pageErrors.length > 0) {
             const errText = pageErrors.join(" | ");
             this.emitStep(taskId, "ERR", `⚠️ لم تكتمل المهمة — أخطاء: ${errText}`);
-            history.push({ role: "user", content: `تحذير: طلبت done لكن توجد أخطاء في الصفحة:\n"${errText}"\nURL الحالي: ${currentUrl}\nصحّح الأخطاء أولاً باستخدام ask أو fill.` });
+            history.push({ role: "user", content: `تحذير: طلبت done لكن توجد أخطاء في الصفحة:\n"${errText}"\nURL الحالي: ${currentUrl}\nصحّح الأخطاء أولاً.` });
             continue;
-          } else if (stillOnForm && !hasSuccess && !urlChanged) {
-            this.emitStep(taskId, "WARN", `⚠️ النموذج لا يزال ظاهراً — لم تكتمل المهمة بعد`);
-            history.push({ role: "user", content: `تحذير: طلبت done لكن النموذج لا يزال ظاهراً والصفحة لم تتغير.\nURL الحالي: ${currentUrl}\nتأكد من:\n1. ملء جميع الحقول المطلوبة\n2. الضغط على زر الإرسال/التسجيل\n3. الانتظار للتحقق من التغيير` });
-            continue;
-          } else {
-            finalResult = param || "اكتملت المهمة بنجاح";
-            break;
           }
+
+          // ثانياً: تحقق حقيقي عبر DeepSeek — هل اكتملت المهمة فعلاً؟
+          this.emitStep(taskId, "THINK", `🔍 DeepSeek يتحقق من اكتمال المهمة...`);
+          try {
+            const verifyPrompt = [
+              `المهمة الأصلية: "${task.description}"`,
+              ``,
+              completionCriteria.length > 0
+                ? `معايير الاكتمال المطلوبة:\n${completionCriteria.map(c => `- ${c}`).join("\n")}`
+                : ``,
+              ``,
+              `الحالة الحالية:`,
+              `URL: ${currentUrl}`,
+              `محتوى الصفحة (أول 800 حرف): ${pageContent.substring(0, 800)}`,
+              ``,
+              `السؤال: هل اكتملت المهمة الأصلية بالكامل بناءً على الحالة الحالية؟`,
+              `أجب بـ JSON فقط: { "completed": true/false, "reason": "سبب واضح", "nextStep": "الخطوة التالية إذا لم تكتمل" }`,
+            ].join("\n");
+
+            const verifyResp = await deepseekChat([
+              { role: "system", content: `أنت محكّم دقيق تتحقق من اكتمال المهام. لا تقبل الاكتمال إلا إذا تحققت المعايير فعلاً.` },
+              { role: "user", content: verifyPrompt },
+            ], 600, 0.1);
+
+            const vJson = verifyResp.match(/\{[\s\S]*\}/);
+            if (vJson) {
+              const v = JSON.parse(vJson[0]);
+              if (v.completed === true) {
+                this.emitStep(taskId, "THINK", `✅ DeepSeek أكد اكتمال المهمة: ${v.reason}`);
+                finalResult = param || v.reason || "اكتملت المهمة بنجاح";
+                break;
+              } else {
+                this.emitStep(taskId, "WARN", `⚠️ DeepSeek: المهمة لم تكتمل بعد — ${v.reason}`);
+                history.push({
+                  role: "user",
+                  content: [
+                    `تحذير من التحقق: طلبت done لكن المهمة لم تكتمل بعد.`,
+                    `السبب: ${v.reason}`,
+                    v.nextStep ? `الخطوة التالية المطلوبة: ${v.nextStep}` : ``,
+                    `URL الحالي: ${currentUrl}`,
+                    `تابع العمل حتى تكتمل المهمة فعلاً.`,
+                  ].filter(Boolean).join("\n"),
+                });
+                continue;
+              }
+            }
+          } catch { }
+
+          // احتياطي: قبل done إذا فشل DeepSeek
+          finalResult = param || "اكتملت المهمة";
+          break;
         }
 
         // ── إجراء ask: توقف وانتظار إدخال المستخدم ───────────────────────────
