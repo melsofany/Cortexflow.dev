@@ -298,19 +298,34 @@ class BrowserAgent extends EventEmitter {
     if (isLoginLike) {
       for (const frame of frames) {
         const fLoc = (sel: string) => frame.locator(sel);
+        // Facebook-specific selectors (highest priority)
+        if (await tryClick(fLoc(`#loginbutton`))) return true;
+        if (await tryClick(fLoc(`[data-testid="royal_login_button"]`))) return true;
+        if (await tryClick(fLoc(`[name="login"]`))) return true;
         if (await tryClick(fLoc(`button[type="submit"]`))) return true;
         if (await tryClick(fLoc(`input[type="submit"]`))) return true;
         if (await tryClick(fLoc(`[data-testid*="login"]`))) return true;
+        if (await tryClick(fLoc(`[id*="login"][id*="button"]`))) return true;
         if (await tryClick(fLoc(`[id*="login"]`))) return true;
         if (await tryClick(fLoc(`[class*="login"]`))) return true;
+        // محاولة النقر على أي زر مرئي في نهاية نموذج
+        if (await tryClick(fLoc(`form button`).last())) return true;
+        if (await tryClick(fLoc(`form input[type="submit"]`))) return true;
       }
       // آخر محاولة: اضغط Enter في الصفحة
       try {
         await this.page.keyboard.press("Enter");
-        await this.page.waitForTimeout(1200);
+        await this.page.waitForTimeout(1500);
         return true;
       } catch { }
     }
+
+    // 7. احتياطي شامل: إذا فشلت كل المحاولات، اضغط Enter
+    try {
+      await this.page.keyboard.press("Enter");
+      await this.page.waitForTimeout(1200);
+      return true;
+    } catch { }
 
     return false;
   }

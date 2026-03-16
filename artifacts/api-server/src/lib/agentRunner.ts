@@ -1373,6 +1373,16 @@ async function executeAction(
         console.log(`[fill] لم يُعثر على الحقل: "${field}" = "${value}"`);
         return { success: false, error: `لم يُعثر على الحقل "${field}" في الصفحة. راجع هيكل الصفحة لمعرفة الأسماء الصحيحة.` };
       }
+      // ── ضغط Enter تلقائي بعد ملء حقل كلمة المرور ──────────────────────
+      const passwordHints = ["password", "pass", "كلمة المرور", "كلمة_المرور", "مرور", "passwd", "pwd"];
+      const isPasswordField = passwordHints.some(k => field.toLowerCase().includes(k));
+      if (isPasswordField) {
+        await sleep(400);
+        await browserAgent.pressKey("Enter");
+        await sleep(1500);
+        await browserAgent.captureNow();
+        console.log(`[fill] ✅ ضغط Enter تلقائياً بعد ملء حقل كلمة المرور`);
+      }
       return { success: true };
     }
     case "select": {
