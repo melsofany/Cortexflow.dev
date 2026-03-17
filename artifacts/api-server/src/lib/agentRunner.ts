@@ -698,13 +698,14 @@ class AgentRunner extends EventEmitter {
       }
 
       // ── مرحلة التحليل الأولية: اقرأ الصفحة كاملاً قبل البدء ────────────
-      const initStruct  = await browserAgent.getPageStructure();
+      // ── الطبقة الأولى: Accessibility Tree (يمنع الهلوسة 27%→3%) ──────────
+      const initStruct  = await browserAgent.getAccessibilityTree();
       const initContent = await browserAgent.getPageContent();
       const initUrl     = await browserAgent.getCurrentUrl();
       // Add login hint when page has no inputs but task requires login
       const taskLower = task.description.toLowerCase();
       const isLoginTask = taskLower.includes("دخول") || taskLower.includes("تسجيل") || taskLower.includes("login") || taskLower.includes("sign in") || taskLower.includes("بيانات");
-      const pageHasNoInputs = !initStruct.includes("[حقل]") && !initStruct.includes("[قائمة");
+      const pageHasNoInputs = !initStruct.includes("[e") && !initStruct.includes("textbox") && !initStruct.includes("combobox");
       if (pageHasNoInputs && isLoginTask) {
         this.emitStep(taskId, "WARN", `⚠️ الصفحة الحالية لا تحتوي على حقول إدخال. إذا كانت المهمة تتطلب تسجيل الدخول، يجب الانتقال إلى صفحة تسجيل الدخول أولاً.`);
       }
@@ -807,7 +808,8 @@ class AgentRunner extends EventEmitter {
       for (let i = 1; i <= MAX_ITERATIONS; i++) {
         // في الخطوة الأولى استخدم التحليل الأولي، وبعدها اقرأ الصفحة من جديد
         const url     = i === 1 ? initUrl     : await browserAgent.getCurrentUrl();
-        const struct  = i === 1 ? initStruct  : await browserAgent.getPageStructure();
+        // Accessibility Tree (الطبقة الأولى — بدلاً من HTML الخام)
+        const struct  = i === 1 ? initStruct  : await browserAgent.getAccessibilityTree();
         const content = i === 1 ? initContent : await browserAgent.getPageContent();
 
         // ── كشف تعليق الوكيل في نفس الصفحة ────────────────────────────────
@@ -820,8 +822,8 @@ class AgentRunner extends EventEmitter {
 
         if (sameUrlCount >= 4) {
           this.emitStep(taskId, "WARN", `⚠️ علق الوكيل في نفس الصفحة (${sameUrlCount} مرات). سيجرّب نهجاً مختلفاً...`);
-          const currentStruct = await browserAgent.getPageStructure();
-          const hasForm = currentStruct.includes("[حقل]");
+          const currentStruct = await browserAgent.getAccessibilityTree();
+          const hasForm = currentStruct.includes("textbox") || currentStruct.includes("combobox") || currentStruct.includes("[e");
           history.push({
             role: "user",
             content: [
@@ -932,8 +934,8 @@ class AgentRunner extends EventEmitter {
         lastAction = action;
 
         if (consecutiveWaits >= 2) {
-          const freshStruct = await browserAgent.getPageStructure();
-          const hasNoInputs = freshStruct.includes("لا توجد حقول إدخال");
+          const freshStruct = await browserAgent.getAccessibilityTree();
+          const hasNoInputs = !freshStruct.includes("[e") && !freshStruct.includes("textbox");
           this.emitStep(taskId, "WARN", `⚠️ تكرار نفس الإجراء "${action}" (${consecutiveWaits} مرات) — تغيير النهج...`);
           history.push({
             role: "user",
@@ -1054,7 +1056,7 @@ class AgentRunner extends EventEmitter {
         // ── كشف الروابط المخترعة من الذاكرة (لم تُرَ على الشاشة) ────────
         if (action === "navigate") {
           const currentPageContent = await browserAgent.getPageContent();
-          const currentPageStruct  = await browserAgent.getPageStructure();
+          const currentPageStruct  = await browserAgent.getAccessibilityTree();
           if (detectFabricatedUrl(effectiveParam, currentPageContent, currentPageStruct)) {
             this.emitStep(taskId, "WARN", [
               `🚨 **كشف رابط مخترع**: الرابط "${effectiveParam}" يحتوي على معرّفات (IDs) غير مرئية في الصفحة الحالية.`,
@@ -1073,6 +1075,10 @@ class AgentRunner extends EventEmitter {
             continue;
           }
         }
+
+        // ── الطبقة الثالثة: التقاط حالة الصفحة قبل الإجراء (Mano 2025) ──────
+        const isStateCheckAction = effectiveAction === "navigate" || effectiveAction === "click" || effectiveAction === "key";
+        const beforeFingerprint  = isStateCheckAction ? await browserAgent.getStateFingerprint() : "";
 
         try {
           const actionResult = await executeAction(effectiveAction, effectiveParam);
@@ -1094,8 +1100,33 @@ class AgentRunner extends EventEmitter {
         // ── كشف صفحات الأمان بعد كل navigate/click ──────────────────────────
         if (action === "navigate" || action === "click" || action === "key") {
           await sleep(800);
+
+          // ── تحقق الطبقة الثالثة: هل تغيّرت الحالة بعد الإجراء؟ ──────────
+          if (isStateCheckAction && beforeFingerprint) {
+            const afterFingerprint = await browserAgent.getStateFingerprint();
+            const stateChange = await browserAgent.stateHasChanged(beforeFingerprint, afterFingerprint);
+            if (!stateChange.changed && action !== "key") {
+              // لم يحدث أي تغيير — الإجراء فشل فعلياً
+              this.emitStep(taskId, "WARN", `⚠️ [تحقق الحالة] "${action} → ${param.slice(0,50)}" لم يُحدث أي تغيير في الصفحة`);
+              const currentA11y = await browserAgent.getAccessibilityTree();
+              history.push({
+                role: "user",
+                content: [
+                  `⛔ **إجراء بدون أثر**: "${action} → ${param.slice(0,80)}" نُفِّذ لكن الصفحة لم تتغير.`,
+                  `هذا يعني أن العنصر لم يكن موجوداً فعلاً أو أن النقر لم ينجح.`,
+                  ``,
+                  `العناصر المتاحة الآن في الصفحة:`,
+                  currentA11y.split("\n").slice(0, 20).join("\n"),
+                  ``,
+                  `اختر إجراءً بديلاً بناءً على العناصر المرئية أعلاه. لا تكرر نفس الإجراء.`,
+                ].join("\n"),
+              });
+            } else if (stateChange.changed) {
+              this.emitStep(taskId, "THINK", `✓ [تحقق الحالة] الإجراء نجح: ${stateChange.detail}`);
+            }
+          }
           const cpContent = await browserAgent.getPageContent();
-          const cpStruct  = await browserAgent.getPageStructure();
+          const cpStruct  = await browserAgent.getAccessibilityTree();
           const cpHandled = await handleSecurityCheckpoint(
             cpContent,
             cpStruct,

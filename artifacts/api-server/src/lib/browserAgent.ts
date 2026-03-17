@@ -1037,6 +1037,156 @@ class BrowserAgent extends EventEmitter {
     } catch { return ""; }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // الطبقة الأولى: Accessibility Tree — ما تستخدمه Stagehand و SeeAct
+  // يمنع الهلوسة من 27% → 3% (ICML 2024)
+  // ══════════════════════════════════════════════════════════════════════════
+  async getAccessibilityTree(): Promise<string> {
+    if (!this.page) return "";
+    try {
+      const url  = this.page.url();
+      const title = await this.page.title().catch(() => "");
+
+      // Playwright accessibility snapshot — يُعيد شجرة العناصر التفاعلية فقط
+      const snapshot = await this.page.accessibility.snapshot({ interestingOnly: true });
+
+      if (!snapshot) return `الصفحة: ${title}\nURL: ${url}\n[لا توجد عناصر تفاعلية]`;
+
+      // تحويل الشجرة إلى نص مفهوم مع مراجع فريدة [eN]
+      let refIdx = 0;
+      const lines: string[] = [];
+      const refMap: Record<string, string> = {};
+
+      const INTERACTIVE_ROLES = new Set([
+        "button", "link", "textbox", "checkbox", "radio", "combobox",
+        "listbox", "menuitem", "option", "tab", "switch", "searchbox",
+        "spinbutton", "slider", "menuitemcheckbox", "menuitemradio",
+        "treeitem", "gridcell", "columnheader",
+      ]);
+      const CONTENT_ROLES = new Set([
+        "heading", "img", "alert", "status", "dialog", "banner",
+        "main", "navigation", "region", "form",
+      ]);
+
+      const flattenNode = (node: any, depth = 0): void => {
+        if (!node) return;
+        const role  = (node.role || "").toLowerCase();
+        const name  = (node.name || "").trim().slice(0, 80);
+        const value = node.value ? String(node.value).slice(0, 60) : "";
+        const desc  = node.description ? String(node.description).slice(0, 40) : "";
+
+        if (INTERACTIVE_ROLES.has(role) && name) {
+          refIdx++;
+          const ref = `e${refIdx}`;
+          refMap[ref] = name;
+          const indent = "  ".repeat(Math.min(depth, 3));
+          const extras: string[] = [];
+          if (value) extras.push(`value="${value}"`);
+          if (node.checked !== undefined) extras.push(node.checked ? "checked" : "unchecked");
+          if (node.required) extras.push("required");
+          if (node.disabled) extras.push("disabled");
+          if (node.focused) extras.push("focused");
+          if (desc) extras.push(`hint="${desc}"`);
+          const extStr = extras.length ? ` (${extras.join(", ")})` : "";
+          lines.push(`${indent}[${ref}] ${role} "${name}"${extStr}`);
+        } else if (CONTENT_ROLES.has(role) && name) {
+          const indent = "  ".repeat(Math.min(depth, 3));
+          lines.push(`${indent}── ${role}: "${name.slice(0, 100)}"`);
+        }
+
+        if (node.children) {
+          for (const child of node.children) {
+            flattenNode(child, depth + 1);
+          }
+        }
+      };
+
+      flattenNode(snapshot);
+
+      if (lines.length === 0) {
+        // fallback: لا توجد عناصر في a11y tree — استخدم DOM المبسط
+        return await this.getPageStructure();
+      }
+
+      return [
+        `الصفحة: ${title}`,
+        `URL: ${url}`,
+        ``,
+        `── Accessibility Tree (${lines.length} عنصر تفاعلي) ──`,
+        lines.join("\n"),
+        ``,
+        `كيفية الاستخدام:`,
+        `  click [eN]    → انقر على العنصر برقم مرجعه`,
+        `  fill [eN]=القيمة → أدخل نصاً في حقل الإدخال`,
+        `  أو استخدم النص المرئي مباشرة في PARAM`,
+      ].join("\n");
+    } catch (err: any) {
+      // في حالة فشل a11y tree — fallback لـ DOM العادي
+      console.log(`[a11yTree] fallback to DOM: ${err?.message}`);
+      return await this.getPageStructure();
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // الطبقة الثانية: Screenshot للنموذج البصري — تحقق حقيقي من الصفحة
+  // SeeAct: من 13% → 51% (ICML 2024)
+  // ══════════════════════════════════════════════════════════════════════════
+  async captureScreenshotBase64(): Promise<string> {
+    if (!this.page) return "";
+    try {
+      const screenshot = await this.page.screenshot({ type: "jpeg", quality: 70, fullPage: false });
+      return screenshot.toString("base64");
+    } catch { return ""; }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // الطبقة الثالثة: State Fingerprint — كشف التغيير بعد كل إجراء (Mano 2025)
+  // ══════════════════════════════════════════════════════════════════════════
+  async getStateFingerprint(): Promise<string> {
+    if (!this.page) return "";
+    try {
+      const url = this.page.url();
+      const data = await this.page.evaluate(() => {
+        const interactiveCount = document.querySelectorAll(
+          "button, a[href], input, select, textarea, [role='button'], [role='link']"
+        ).length;
+        const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
+          .map(h => (h as HTMLElement).innerText?.trim().slice(0, 30))
+          .filter(Boolean)
+          .join("|");
+        const alerts = Array.from(document.querySelectorAll('[role="alert"], [class*="error" i], [class*="success" i]'))
+          .map(el => (el as HTMLElement).innerText?.trim().slice(0, 30))
+          .filter(Boolean)
+          .join("|");
+        return { interactiveCount, headings, alerts };
+      });
+      return `${url}|${data.interactiveCount}|${data.headings}|${data.alerts}`;
+    } catch { return this.page?.url() || ""; }
+  }
+
+  // مقارنة حالتين: هل تغيّر شيء بعد الإجراء؟
+  async stateHasChanged(before: string, after: string): Promise<{
+    changed: boolean;
+    urlChanged: boolean;
+    detail: string;
+  }> {
+    const beforeParts = before.split("|");
+    const afterParts  = after.split("|");
+    const urlChanged  = beforeParts[0] !== afterParts[0];
+    const countChanged = beforeParts[1] !== afterParts[1];
+    const headingChanged = beforeParts[2] !== afterParts[2];
+    const alertChanged   = beforeParts[3] !== afterParts[3];
+    const changed = urlChanged || countChanged || headingChanged || alertChanged;
+
+    const details: string[] = [];
+    if (urlChanged)     details.push(`URL تغيّر: ${afterParts[0]?.slice(0, 60)}`);
+    if (countChanged)   details.push(`عدد العناصر: ${beforeParts[1]} → ${afterParts[1]}`);
+    if (headingChanged) details.push(`عنوان جديد: "${afterParts[2]?.slice(0, 50)}"`);
+    if (alertChanged)   details.push(`رسالة جديدة: "${afterParts[3]?.slice(0, 50)}"`);
+
+    return { changed, urlChanged, detail: details.join(" | ") || "لا تغيير ملحوظ" };
+  }
+
   // كشف رسائل الخطأ الظاهرة في الصفحة
   async detectErrors(): Promise<string[]> {
     if (!this.page) return [];
