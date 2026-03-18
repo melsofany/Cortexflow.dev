@@ -29,6 +29,18 @@
       "url": "https://www.facebook.com",
       "count": 3,
       "lastUsed": "2026-03-16T17:37:01.229Z"
+    },
+    {
+      "keyword": "pages",
+      "url": "https://mc.gov.sa",
+      "count": 1,
+      "lastUsed": "2026-03-18T03:21:54.153Z"
+    },
+    {
+      "keyword": "aspx",
+      "url": "https://mc.gov.sa",
+      "count": 1,
+      "lastUsed": "2026-03-18T03:21:54.154Z"
     }
   ],
   "strategies": [
@@ -60,12 +72,31 @@
       "failCount": 0,
       "lastUsed": "2026-03-16T08:46:09.232Z",
       "tags": []
+    },
+    {
+      "taskPattern": "ابحث عن صوره السجل التجاري الخاص بشركة الخدمات التجارية البترولية بتروتريد",
+      "steps": [
+        "MODEL: تصنيف المهمة: 🌐 تصفح ويب\nالنموذج المختار: qwen2:0.5b\nالسبب:",
+        "OBSERVE: تحليل مهمة التصفح: \"ابحث عن صوره السجل التجاري الخاص بشركة ا",
+        "THINK: ## 🔬 تحليل تعقيد المهمة\nدرجة التعقيد: **1/10** (simple)\n## ",
+        "THINK: 🔍 DeepSeek يحلل المهمة بعمق...",
+        "THINK: ## 🧠 فهم المهمة\nالمهمة هي البحث عن صورة أو نسخة رقمية من ال",
+        "THINK: 🎯 DeepSeek حدد الرابط الصحيح: https://mc.gov.sa/ar/eservice",
+        "WARN: ⚠️ **قبل البدء يجب توفير:**\n- اسم الشركة الكامل (موفر: 'الخد",
+        "PLAN: خطة التنفيذ (DeepSeek):\n1. الخطوة 1: الانتقال إلى الرابط الم"
+      ],
+      "successCount": 1,
+      "failCount": 0,
+      "lastUsed": "2026-03-18T03:21:54.164Z",
+      "tags": [
+        "بحث"
+      ]
     }
   ],
   "preferences": [],
-  "totalTasks": 4,
-  "successfulTasks": 4,
-  "failedTasks": 0,
+  "totalTasks": 6,
+  "successfulTasks": 5,
+  "failedTasks": 1,
   "createdAt": "2026-03-16T06:22:02.952Z",
-  "updatedAt": "2026-03-16T18:00:00.000Z"
+  "updatedAt": "2026-03-18T03:21:54.177Z"
 }
