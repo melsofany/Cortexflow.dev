@@ -1,4 +1,5 @@
 import axios from "axios";
+import http from "http";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -152,6 +153,68 @@ class OllamaClient {
       { timeout: 120000 }
     );
     return response.data?.response || "";
+  }
+
+  async chatStream(
+    messages: ChatMessage[],
+    onToken: (token: string, done: boolean) => void,
+    options: { temperature?: number; max_tokens?: number; model?: string } = {},
+  ): Promise<string> {
+    if (!this.available) throw new Error("Ollama not available");
+    const modelToUse = options.model || this.model;
+
+    return new Promise((resolve, reject) => {
+      const body = JSON.stringify({
+        model: modelToUse,
+        messages,
+        stream: true,
+        options: {
+          temperature: options.temperature ?? 0.4,
+          num_predict: options.max_tokens ?? 1200,
+        },
+      });
+
+      const url = new URL(`${this.baseUrl}/api/chat`);
+      const req = http.request(
+        { hostname: url.hostname, port: Number(url.port) || 11434, path: url.pathname, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+        (res) => {
+          let fullText = "";
+          let buffer = "";
+
+          res.on("data", (chunk: Buffer) => {
+            buffer += chunk.toString();
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const parsed = JSON.parse(line);
+                const token = parsed?.message?.content || "";
+                const done = parsed?.done ?? false;
+                if (token) {
+                  fullText += token;
+                  onToken(token, false);
+                }
+                if (done) {
+                  onToken("", true);
+                }
+              } catch { /* skip malformed */ }
+            }
+          });
+
+          res.on("end", () => {
+            onToken("", true);
+            resolve(fullText);
+          });
+          res.on("error", reject);
+        },
+      );
+
+      req.on("error", reject);
+      req.write(body);
+      req.end();
+    });
   }
 }
 

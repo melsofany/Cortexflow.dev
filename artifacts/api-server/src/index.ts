@@ -153,6 +153,8 @@ io.on("connection", (socket) => {
       const onThinking      = (d: any) => { if (d.taskId === task.taskId) io.emit("thinking", d); };
       const onAgentActivity = (d: any) => { if (d.taskId === task.taskId) io.emit("agentActivity", d); };
       const onTaskPlan      = (d: any) => { if (d.taskId === task.taskId) io.emit("taskPlan", d); };
+      const onAgentToken    = (d: any) => { if (d.taskId === task.taskId) io.emit("agentToken", d); };
+      const onMemoryStore   = (d: any) => { if (d.taskId === task.taskId) io.emit("memoryStore", d); };
       const onStart = (d: any) => {
         if (d.taskId === task.taskId) {
           io.emit("taskStart", { ...d, type: task.type, description: task.description });
@@ -196,6 +198,8 @@ io.on("connection", (socket) => {
         agentRunner.off("thinking",      onThinking);
         agentRunner.off("agentActivity", onAgentActivity);
         agentRunner.off("taskPlan",      onTaskPlan);
+        agentRunner.off("agentToken",    onAgentToken);
+        agentRunner.off("memoryStore",   onMemoryStore);
         agentRunner.off("taskStart",     onStart);
         agentRunner.off("taskSuccess",   onSuccess);
         agentRunner.off("taskFail",      onFail);
@@ -205,6 +209,8 @@ io.on("connection", (socket) => {
       agentRunner.on("thinking",      onThinking);
       agentRunner.on("agentActivity", onAgentActivity);
       agentRunner.on("taskPlan",      onTaskPlan);
+      agentRunner.on("agentToken",    onAgentToken);
+      agentRunner.on("memoryStore",   onMemoryStore);
       agentRunner.on("taskStart",     onStart);
       agentRunner.on("taskSuccess",   onSuccess);
       agentRunner.on("taskFail",      onFail);

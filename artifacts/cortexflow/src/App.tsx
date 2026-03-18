@@ -1037,6 +1037,8 @@ const App: React.FC = () => {
   const [currentPlan, setCurrentPlan]     = useState<TaskPlan | null>(null);
   const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null);
   const [liveScore, setLiveScore]         = useState<number | null>(null);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const streamingBufferRef = useRef<string>('');
   const [liveHealth, setLiveHealth]       = useState<{deepseek:boolean;ollama:boolean;browser:boolean;agentService:boolean} | null>(null);
   const [isCloud, setIsCloud]             = useState(false);
 
@@ -1156,10 +1158,61 @@ const App: React.FC = () => {
       }
     });
 
+    // ── Streaming tokens from Ollama ─────────────────────────────────────────
+    socket.on('agentToken', (d: { taskId: string; token: string; done: boolean; streaming: boolean }) => {
+      if (!d.token && !d.done) {
+        // بداية الـ Streaming — إنشاء رسالة جديدة فارغة
+        streamingBufferRef.current = '';
+        const newId = `stream_${Date.now()}`;
+        setStreamingMsgId(newId);
+        setMessages(prev => [...prev, {
+          id: newId, type: 'agent', text: '▌',
+          timestamp: new Date(), status: 'running',
+        }]);
+        return;
+      }
+      if (d.token && !d.done) {
+        // إضافة token للرسالة الجارية
+        streamingBufferRef.current += d.token;
+        const currentBuf = streamingBufferRef.current;
+        setMessages(prev => prev.map(m =>
+          m.id === streamingBufferRef.current.startsWith('') && prev[prev.length - 1]?.status === 'running'
+            ? { ...m, text: currentBuf + '▌' }
+            : m
+        ));
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          if (last?.status === 'running') {
+            return [...prev.slice(0, -1), { ...last, text: currentBuf + '▌' }];
+          }
+          return prev;
+        });
+      }
+      if (d.done) {
+        // انتهاء الـ Streaming
+        const finalText = streamingBufferRef.current;
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          if (last?.status === 'running') {
+            return [...prev.slice(0, -1), { ...last, text: finalText, status: 'completed' }];
+          }
+          return prev;
+        });
+        setStreamingMsgId(null);
+        streamingBufferRef.current = '';
+      }
+    });
+
     socket.on('taskSuccess', (d: any) => {
       setIsAgentBusy(false);
       setAgentActivity(null);
       setActiveTab('chat');
+      // إذا كان الـ Streaming جارياً، لا نضيف رسالة مكررة
+      if (streamingBufferRef.current && streamingBufferRef.current.length > 10) {
+        setStreamingMsgId(null);
+        streamingBufferRef.current = '';
+        return;
+      }
       if (d?.result) {
         addAgent(d.result, 'completed');
       } else {

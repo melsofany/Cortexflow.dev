@@ -14,6 +14,8 @@ import { parallelExecutor } from "./parallelExecutor.js";
 import { reactEngine } from "./reactEngine.js";
 import { contextManager } from "./contextManager.js";
 import { toolOrchestrator } from "./toolOrchestrator.js";
+import { verificationAgent } from "./verificationAgent.js";
+import { episodicMemory } from "./episodicMemory.js";
 import {
   analyzeTaskComplexity,
   buildKnowledgeAudit,
@@ -379,6 +381,13 @@ class AgentRunner extends EventEmitter {
     // المسار المتقدم: DAG + Parallel + ReAct
     // ══════════════════════════════════════════════════════════════════════
 
+    // ── الذاكرة الإبستيمية: استرجاع محادثات سابقة ذات صلة ───────────────────
+    const memoryHint = episodicMemory.buildContextualHint(task.description);
+    if (memoryHint) {
+      this.emitStep(taskId, "MEMORY", `🧠 ${memoryHint}`);
+      enrichedDescription = `${enrichedDescription}\n\n${memoryHint}`;
+    }
+
     // 1) إنشاء خطة DAG
     this.emitStep(taskId, "PLANNING", "🧠 وكيل التخطيط يحلل المهمة ويبني مخطط تنفيذ ذكي...");
 
@@ -494,6 +503,62 @@ class AgentRunner extends EventEmitter {
       );
     }
 
+    // 4) وكيل التحقق (مستوحى من Manus AI: Planner → Executor → Verifier)
+    this.emitStep(taskId, "VERIFY", "🔬 وكيل التحقق يقيّم جودة النتائج...");
+
+    const planNodes = Array.from(dagPlan.nodes.values()).map(n => ({
+      title: n.title,
+      description: n.description,
+    }));
+
+    const verificationCallLLM = async (msgs: Array<{ role: string; content: string }>, maxTok = 600) => {
+      return smartChatFn(
+        msgs as Array<{ role: "system" | "user" | "assistant"; content: string }>,
+        { temperature: 0.2, max_tokens: maxTok },
+        "VERIFY",
+      );
+    };
+
+    const verResult = await verificationAgent.verify(
+      {
+        goal: task.description,
+        plan: planNodes,
+        results: allResults,
+        finalAnswer: finalReview,
+        category,
+      },
+      verificationCallLLM,
+    );
+
+    const verReport = verificationAgent.formatReport(verResult);
+    this.emitStep(taskId, "VERIFY", verReport);
+
+    let outputToReturn = finalReview;
+
+    // إذا كانت الجودة منخفضة وإعادة التخطيط ليست ضرورية: حسّن الإجابة فقط
+    if (!verResult.passed && !verResult.rePlanNeeded && verResult.score >= 4) {
+      this.emitStep(taskId, "ACT", "🔧 تحسين الإجابة بناءً على ملاحظات التحقق...");
+      const improvements = [
+        ...verResult.missingElements.map(e => `أضف: ${e}`),
+        ...verResult.suggestions,
+      ].join(", ");
+
+      const improved = await smartChatFn(
+        [
+          { role: "system", content: "أنت وكيل تحسين. حسّن الإجابة بناءً على الملاحظات مع الحفاظ على المحتوى الأصلي." },
+          {
+            role: "user",
+            content: `الهدف: ${task.description}\n\nالإجابة الحالية:\n${finalReview}\n\nالملاحظات:\n${improvements}\n\nقدّم إجابة محسّنة.`,
+          },
+        ],
+        { temperature: 0.3, max_tokens: 1400 },
+        "IMPROVEMENT",
+      );
+      if (improved && improved.length > finalReview.length * 0.5) {
+        outputToReturn = improved;
+      }
+    }
+
     const duration = Date.now() - start;
     const completedCount = Array.from(dagPlan.nodes.values()).filter(n => n.status === "done").length;
     const successRate = dagPlan.totalNodes > 0 ? (completedCount / dagPlan.totalNodes) : 1;
@@ -508,15 +573,47 @@ class AgentRunner extends EventEmitter {
     } catch {}
 
     techIntelligence.onTaskEnd(taskId, successRate > 0.5);
-    taskStore.updateTask(taskId, { status: "completed", result: finalReview });
+
+    // ── تخزين الحلقة في الذاكرة الإبستيمية ────────────────────────────────
+    try {
+      const keyFacts = Object.values(allResults)
+        .filter(r => r && r.length > 20)
+        .slice(0, 5)
+        .map(r => r.substring(0, 120));
+
+      episodicMemory.storeEpisode({
+        timestamp: new Date().toISOString(),
+        sessionId: taskId,
+        goal: task.description,
+        category,
+        summary: outputToReturn.substring(0, 400),
+        outcome: verResult.passed ? "success" : successRate > 0.5 ? "partial" : "failure",
+        keyFacts,
+        tools: Array.from(dagPlan.nodes.values()).map(n => n.tool || n.agent).filter(Boolean),
+        durationMs: duration,
+        score: verResult.score,
+      });
+
+      // تخزين أنماط إجرائية ناجحة
+      episodicMemory.storeProceduralPattern(
+        category,
+        `خطة ${dagPlan.totalNodes} مهمة مع ${Array.from(dagPlan.nodes.values()).filter(n => n.isParallel).length} متوازٍ`,
+        verResult.passed,
+        task.description.substring(0, 100),
+      );
+    } catch (memErr) {
+      console.warn("[EpisodicMemory] فشل تخزين الحلقة:", memErr);
+    }
+
+    taskStore.updateTask(taskId, { status: "completed", result: outputToReturn });
     taskStore.addLog({
       taskId,
-      agentType: "DAG+Parallel",
+      agentType: "DAG+Parallel+Verify",
       action: "task_complete",
-      output: finalReview.substring(0, 300),
+      output: outputToReturn.substring(0, 300),
       durationMs: duration,
     });
-    this.emit("taskSuccess", { taskId, result: finalReview });
+    this.emit("taskSuccess", { taskId, result: outputToReturn });
   }
 
   private async runDirectResponse(
@@ -530,18 +627,54 @@ class AgentRunner extends EventEmitter {
     this.emitStep(taskId, "THINK", "💬 استجابة مباشرة...");
 
     const systemPrompt = SYSTEM_PROMPTS[category] || SYSTEM_PROMPTS.default;
-    const result = await smartChat(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: enrichedDescription },
-      ],
-      { temperature: 0.4, max_tokens: 1200, model },
-      "DIRECT",
-    );
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      { role: "user" as const, content: enrichedDescription },
+    ];
+
+    let result = "";
+
+    // محاولة الـ Streaming عبر Ollama إذا كان متاحاً وبلا DeepSeek
+    if (ollamaClient.isAvailable() && !getDeepSeekKey()) {
+      try {
+        this.emit("agentToken", { taskId, token: "", done: false, streaming: true });
+        result = await ollamaClient.chatStream(
+          messages,
+          (token, done) => {
+            this.emit("agentToken", { taskId, token, done, streaming: !done });
+          },
+          { temperature: 0.4, max_tokens: 1200, model },
+        );
+      } catch {
+        result = "";
+      }
+    }
+
+    // الاحتياط: استخدام smartChat العادي إذا فشل الـ Streaming
+    if (!result) {
+      result = await smartChat(messages, { temperature: 0.4, max_tokens: 1200, model }, "DIRECT");
+    }
 
     const duration = Date.now() - start;
     modelSelector.recordResult(model, category, true, duration / 1000, 0.9);
     techIntelligence.onTaskEnd(taskId, true);
+
+    // تخزين في الذاكرة الإبستيمية
+    try {
+      episodicMemory.storeEpisode({
+        timestamp: new Date().toISOString(),
+        sessionId: taskId,
+        goal: task.description,
+        category,
+        summary: result.substring(0, 400),
+        outcome: "success",
+        keyFacts: [],
+        tools: ["direct_response"],
+        durationMs: duration,
+        score: 8,
+      });
+    } catch { /* ignore */ }
+
     taskStore.updateTask(taskId, { status: "completed", result });
     taskStore.addLog({ taskId, agentType: "DirectResponse", action: "task_complete", output: result.substring(0, 300), durationMs: duration });
     this.emit("taskSuccess", { taskId, result });
