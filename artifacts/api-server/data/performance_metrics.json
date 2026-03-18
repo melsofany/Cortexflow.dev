@@ -1,6 +1,174 @@
 {
   "snapshots": [
     {
+      "timestamp": "2026-03-18T01:25:54.253Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1450,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:25:54.239Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:25:54.240Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:25:54.253Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-18T01:25:54.253Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:25:54.253Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
+      "timestamp": "2026-03-18T01:24:16.290Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1472,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:24:16.276Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:24:16.279Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:24:16.290Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-18T01:24:16.290Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:24:16.290Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
+      "timestamp": "2026-03-18T01:19:16.426Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1607,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:19:16.411Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:19:16.413Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:19:16.426Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-18T01:19:16.426Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:19:16.426Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
+      "timestamp": "2026-03-18T01:14:16.242Z",
+      "metrics": [
+        {
+          "name": "deepseek_latency_ms",
+          "value": 1410,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:14:16.215Z",
+          "status": "healthy"
+        },
+        {
+          "name": "ollama_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:14:16.221Z",
+          "status": "healthy"
+        },
+        {
+          "name": "agent_service_status",
+          "value": 1,
+          "unit": "bool",
+          "timestamp": "2026-03-18T01:14:16.242Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_success_rate",
+          "value": 100,
+          "unit": "%",
+          "timestamp": "2026-03-18T01:14:16.242Z",
+          "status": "healthy"
+        },
+        {
+          "name": "task_avg_duration_ms",
+          "value": 440987,
+          "unit": "ms",
+          "timestamp": "2026-03-18T01:14:16.242Z",
+          "status": "critical"
+        }
+      ],
+      "issues": [],
+      "score": 80
+    },
+    {
       "timestamp": "2026-03-18T01:09:20.281Z",
       "metrics": [
         {
@@ -4041,174 +4209,6 @@
       ],
       "issues": [],
       "score": 80
-    },
-    {
-      "timestamp": "2026-03-16T18:12:12.634Z",
-      "metrics": [
-        {
-          "name": "deepseek_latency_ms",
-          "value": 2122,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:12:12.620Z",
-          "status": "healthy"
-        },
-        {
-          "name": "ollama_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:12:12.621Z",
-          "status": "healthy"
-        },
-        {
-          "name": "agent_service_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:12:12.634Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_success_rate",
-          "value": 100,
-          "unit": "%",
-          "timestamp": "2026-03-16T18:12:12.634Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_avg_duration_ms",
-          "value": 440987,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:12:12.634Z",
-          "status": "critical"
-        }
-      ],
-      "issues": [],
-      "score": 80
-    },
-    {
-      "timestamp": "2026-03-16T18:10:33.437Z",
-      "metrics": [
-        {
-          "name": "deepseek_latency_ms",
-          "value": 1847,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:10:33.272Z",
-          "status": "healthy"
-        },
-        {
-          "name": "ollama_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:10:33.274Z",
-          "status": "healthy"
-        },
-        {
-          "name": "agent_service_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:10:33.437Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_success_rate",
-          "value": 100,
-          "unit": "%",
-          "timestamp": "2026-03-16T18:10:33.437Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_avg_duration_ms",
-          "value": 440987,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:10:33.437Z",
-          "status": "critical"
-        }
-      ],
-      "issues": [],
-      "score": 80
-    },
-    {
-      "timestamp": "2026-03-16T18:05:34.346Z",
-      "metrics": [
-        {
-          "name": "deepseek_latency_ms",
-          "value": 2902,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:05:34.326Z",
-          "status": "healthy"
-        },
-        {
-          "name": "ollama_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:05:34.328Z",
-          "status": "healthy"
-        },
-        {
-          "name": "agent_service_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:05:34.346Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_success_rate",
-          "value": 100,
-          "unit": "%",
-          "timestamp": "2026-03-16T18:05:34.346Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_avg_duration_ms",
-          "value": 440987,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:05:34.346Z",
-          "status": "critical"
-        }
-      ],
-      "issues": [],
-      "score": 80
-    },
-    {
-      "timestamp": "2026-03-16T18:00:33.321Z",
-      "metrics": [
-        {
-          "name": "deepseek_latency_ms",
-          "value": 1883,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:00:33.307Z",
-          "status": "healthy"
-        },
-        {
-          "name": "ollama_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:00:33.309Z",
-          "status": "healthy"
-        },
-        {
-          "name": "agent_service_status",
-          "value": 1,
-          "unit": "bool",
-          "timestamp": "2026-03-16T18:00:33.321Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_success_rate",
-          "value": 100,
-          "unit": "%",
-          "timestamp": "2026-03-16T18:00:33.321Z",
-          "status": "healthy"
-        },
-        {
-          "name": "task_avg_duration_ms",
-          "value": 440987,
-          "unit": "ms",
-          "timestamp": "2026-03-16T18:00:33.321Z",
-          "status": "critical"
-        }
-      ],
-      "issues": [],
-      "score": 80
     }
   ],
   "taskStats": {
@@ -4223,7 +4223,7 @@
     "browser": true,
     "agentService": true
   },
-  "lastCheck": "2026-03-18T01:09:20.281Z",
+  "lastCheck": "2026-03-18T01:25:54.253Z",
   "alerts": [
     {
       "level": "warn",

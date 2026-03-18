@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { io, Socket } from 'socket.io-client';
+import { DAGView } from './components/dag-view';
 import {
   Send, Bot, User, Brain, Info, CheckCircle2,
   Loader2, RefreshCw, History, Monitor,
@@ -29,11 +30,13 @@ interface Message {
 interface Task { taskId: string; description: string; status: string; createdAt: string; }
 
 interface PlanStep {
-  id: number;
+  id: string | number;
   title: string;
   description: string;
-  agent: 'browser' | 'coder' | 'researcher' | 'reviewer' | 'general' | 'planner';
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  agent: 'browser' | 'coder' | 'researcher' | 'reviewer' | 'general' | 'planner' | 'executor';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'done' | 'ready';
+  dependencies?: string[];
+  isParallel?: boolean;
   result?: string;
 }
 
@@ -83,6 +86,7 @@ const AGENT_META: Record<string, { icon: any; color: string; bg: string; label: 
   coder:      { icon: Code2,          color: 'text-amber-400',   bg: 'bg-amber-500/15 border-amber-500/30',    label: 'وكيل البرمجة'  },
   researcher: { icon: Search,         color: 'text-cyan-400',    bg: 'bg-cyan-500/15 border-cyan-500/30',      label: 'وكيل البحث'    },
   reviewer:   { icon: CheckCircle2,   color: 'text-emerald-400', bg: 'bg-emerald-500/15 border-emerald-500/30',label: 'وكيل المراجعة' },
+  executor:   { icon: Zap,            color: 'text-orange-400',  bg: 'bg-orange-500/15 border-orange-500/30',  label: 'وكيل التنفيذ'  },
   general:    { icon: Zap,            color: 'text-indigo-400',  bg: 'bg-indigo-500/15 border-indigo-500/30',  label: 'الوكيل العام'  },
 };
 
@@ -539,6 +543,18 @@ const PlanPanel = memo(({ plan, agentActivity, isAgentBusy }: {
 
   if (!plan) return null;
 
+  const hasDAG = plan.steps.some(s => s.dependencies !== undefined);
+  const dagNodes = plan.steps.map(s => ({
+    id: String(s.id),
+    title: s.title,
+    description: s.description,
+    agent: s.agent,
+    status: s.status === 'completed' ? 'done' : s.status,
+    dependencies: s.dependencies || [],
+    isParallel: s.isParallel,
+    result: s.result,
+  }));
+
   return (
     <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
       {/* Header */}
@@ -548,6 +564,9 @@ const PlanPanel = memo(({ plan, agentActivity, isAgentBusy }: {
             <ListChecks size={14} className="text-violet-400"/>
           </div>
           <span className="text-violet-300 text-xs font-bold uppercase tracking-wider">خطة التنفيذ</span>
+          {hasDAG && (
+            <span className="text-[9px] px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded-full border border-cyan-500/30 font-mono">DAG</span>
+          )}
           <span className="ml-auto text-[10px] text-slate-500 flex items-center gap-1">
             <Clock size={10}/> {plan.estimatedTime}
           </span>
@@ -558,8 +577,23 @@ const PlanPanel = memo(({ plan, agentActivity, isAgentBusy }: {
             {plan.category}
           </span>
           <span className="text-[10px] text-slate-500">{plan.steps.length} خطوات</span>
+          {hasDAG && (
+            <span className="text-[10px] text-cyan-400">
+              ⚡ {plan.steps.filter(s => (s.dependencies || []).length === 0).length} متوازي
+            </span>
+          )}
         </div>
       </div>
+
+      {/* DAG Visualization */}
+      {hasDAG && dagNodes.length > 0 && (
+        <DAGView
+          nodes={dagNodes}
+          category={plan.category}
+          goal={plan.goal}
+          isActive={isAgentBusy}
+        />
+      )}
 
       {/* Active agent banner */}
       <AnimatePresence>

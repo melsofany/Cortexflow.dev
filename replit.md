@@ -2,7 +2,13 @@
 
 ## Overview
 
-CortexFlow is a professional multi-agent AI platform. It uses a Planner Agent to decompose user goals into structured task plans, then routes each step to the appropriate specialized agent (Browser, Coder, Researcher, Reviewer, General). It includes a short-term + long-term memory system, real-time plan visualization, and hybrid AI routing (Ollama local → DeepSeek cloud).
+CortexFlow is a professional multi-agent AI platform inspired by Manus AI's architecture. It implements:
+- **DAG-based Task Planning**: Tasks as Directed Acyclic Graphs with parallel execution of independent steps
+- **ReAct Engine**: Explicit Thought → Action → Observation loop for complex reasoning
+- **Parallel Execution**: Multiple agents running simultaneously for speed
+- **Context Manager**: Smart context window compression to avoid token overflow
+- **Tool Orchestrator**: Unified tool registry with caching and intelligent selection
+- **Hybrid AI**: Ollama (local) → DeepSeek (cloud) → fallback chain
 
 ## Stack
 
@@ -13,34 +19,48 @@ CortexFlow is a professional multi-agent AI platform. It uses a Planner Agent to
 - **API framework**: Express 5 + Socket.io
 - **Frontend**: React + Vite + Tailwind CSS + Framer Motion
 - **AI Runtime**: Ollama (local CPU inference) → Python FastAPI agent service
-- **Agent Loops**: OODA (primary), LangGraph, AutoGPT, Code Interpreter, Mistral
-- **Agent Tools**: execute_code, calculate, read_file, write_file, web_search (DuckDuckGo), run_shell
+- **Agent Loops**: DAG+Parallel (Manus-inspired), ReAct, OODA, LangGraph
+- **Agent Tools**: execute_code, calculate, read_file, write_file, web_search, browser_navigate, shell_run, summarize_text, extract_info
 
 ## Architecture
 
 ```text
 User (Frontend App.tsx)
   ↓  socket.io /api/socket
-API Server (Express, port 8080)   ← io.emit() broadcasts to ALL clients
+API Server (Express, port 8080)
   ↓  agentRunner.ts → classifies task
+  ├── Simple chat → Direct Response (fast path)
   ├── Browser tasks → Playwright/Chromium browser agent
   ├── Math tasks → Python Agent Service (port 8090)
-  └── Code/Research/Creative/General → Multi-Agent System:
+  └── Complex tasks → Manus-inspired DAG Pipeline:
         ↓
-      PlannerAgent → TaskPlan (steps + agents)
+      DAGPlanner → DAGPlan (nodes + dependencies + parallel groups)
         ↓
-      MultiAgentOrchestrator → executes each step:
-        ├── PlannerAgent (goal decomposition)
-        ├── BrowserAgent (web navigation)
-        ├── CoderAgent (programming tasks)
+      ParallelExecutor → runs independent nodes simultaneously:
         ├── ResearcherAgent (information gathering)
+        ├── CoderAgent (programming tasks)
+        ├── BrowserAgent (web navigation)
+        ├── ExecutorAgent (tool execution)
         ├── ReviewerAgent (quality review)
         └── GeneralAgent (miscellaneous)
         ↓
-      MemorySystem → short-term (session) + long-term (persistent)
+      ContextManager → sliding window compression + pinned facts
         ↓
-      Ollama (port 11434) → llama3.2:1b / qwen2:0.5b / llama3.2:3b
+      ToolOrchestrator → web_search, execute_code, calculate, etc.
+        ↓
+      ReviewAgent → merge + synthesize parallel results
+        ↓
+      Ollama (port 11434) + DeepSeek API
 ```
+
+## New Components (Manus AI-inspired)
+
+- `dagPlanner.ts` — DAG-based task decomposition with dependency tracking
+- `parallelExecutor.ts` — Concurrent execution of independent DAG nodes
+- `reactEngine.ts` — ReAct loop (Thought→Action→Observation) with self-verification
+- `contextManager.ts` — Smart context compression and working memory
+- `toolOrchestrator.ts` — Unified tool registry with caching and intelligent selection
+- `dag-view.tsx` — Real-time DAG visualization in the frontend
 
 ## Structure
 

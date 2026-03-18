@@ -9,6 +9,11 @@ import { memorySystem } from "./memory.js";
 import { multiAgentOrchestrator } from "./multiAgent.js";
 import { learningEngine } from "./learningEngine.js";
 import { techIntelligence } from "./techIntelligence.js";
+import { dagPlanner, DAGPlan } from "./dagPlanner.js";
+import { parallelExecutor } from "./parallelExecutor.js";
+import { reactEngine } from "./reactEngine.js";
+import { contextManager } from "./contextManager.js";
+import { toolOrchestrator } from "./toolOrchestrator.js";
 import {
   analyzeTaskComplexity,
   buildKnowledgeAudit,
@@ -348,7 +353,7 @@ class AgentRunner extends EventEmitter {
   ): Promise<void> {
     const taskId = task.taskId;
 
-    // Build full task description with conversation context
+    // بناء وصف المهمة مع سياق المحادثة
     const convHistory = task.conversationHistory || [];
     let enrichedDescription = task.description;
     if (convHistory.length > 0) {
@@ -358,58 +363,188 @@ class AgentRunner extends EventEmitter {
       enrichedDescription = `سياق المحادثة:\n${recentHistory}\n\nالمهمة الحالية: ${task.description}`;
     }
 
-    // 1) إنشاء الخطة
-    this.emitStep(taskId, "PLANNING", "وكيل التخطيط يحلل المهمة...");
-    const plan = await plannerAgent.createPlan(enrichedDescription, (msgs, opts) =>
-      smartChat(msgs, opts || {}, "PLANNING"),
-    );
+    const smartChatFn = (msgs: ChatMessage[], opts?: Record<string, unknown>, stepName?: string) =>
+      smartChat(msgs, { ...(opts || {}), model }, stepName || "");
 
-    this.emit("taskPlan", { taskId, plan });
-    this.emitStep(taskId, "PLAN", `خطة التنفيذ (${plan.steps.length} خطوات):\n${plan.steps.map((s) => `${s.id}. [${s.agent}] ${s.title}`).join("\n")}`);
-    await sleep(300);
+    // تحديد إذا كانت المهمة تستفيد من ReAct Loop
+    const isSimpleChat = /^(ما|من|كيف|متى|أين|هل|شرح|اشرح|عرّف|ما هو|ما هي|اقترح|قائمة|اعطني|أعطني)/i.test(task.description.trim());
 
-    // 2) تنفيذ كل خطوة بالوكيل المناسب
-    const stepResults: Record<number, string> = {};
-
-    for (const step of plan.steps) {
-      this.emitStep(taskId, "ACT", `تنفيذ الخطوة ${step.id}/${plan.steps.length}: ${step.title}`);
-
-      const result = await multiAgentOrchestrator.executeStep(
-        taskId,
-        step,
-        task.description,
-        stepResults,
-        (msgs, opts, stepName) => smartChat(msgs, { ...opts, model }, stepName || ""),
-      );
-
-      stepResults[step.id] = result;
-      this.emitStep(taskId, "VERIFY", `✓ الخطوة ${step.id}: ${step.title}\n${result.substring(0, 200)}`);
-      await sleep(200);
+    if (isSimpleChat && task.description.length < 200) {
+      // مسار سريع: استجابة مباشرة بدون تخطيط
+      await this.runDirectResponse(task, start, model, category, enrichedDescription);
+      return;
     }
 
-    // 3) مراجعة نهائية
-    this.emitStep(taskId, "OBSERVE", "وكيل المراجعة يراجع النتائج النهائية...");
-    const finalReview = await multiAgentOrchestrator.runReviewPhase(
+    // ══════════════════════════════════════════════════════════════════════
+    // المسار المتقدم: DAG + Parallel + ReAct
+    // ══════════════════════════════════════════════════════════════════════
+
+    // 1) إنشاء خطة DAG
+    this.emitStep(taskId, "PLANNING", "🧠 وكيل التخطيط يحلل المهمة ويبني مخطط تنفيذ ذكي...");
+
+    const dagPlan = await dagPlanner.createDAGPlan(enrichedDescription, smartChatFn);
+
+    // إرسال الخطة للواجهة الأمامية
+    this.emit("taskPlan", {
       taskId,
-      task.description,
-      stepResults,
-      (msgs, opts) => smartChat(msgs, { ...opts, model }),
+      plan: {
+        steps: Array.from(dagPlan.nodes.values()).map(n => ({
+          id: n.id,
+          title: n.title,
+          description: n.description,
+          agent: n.agent,
+          status: n.status,
+          dependencies: n.dependencies,
+          isParallel: n.isParallel,
+        })),
+        category: dagPlan.category,
+        estimatedTime: `${dagPlan.totalNodes * 20} ثانية`,
+        createdAt: dagPlan.createdAt,
+        goal: dagPlan.goal,
+      },
+    });
+
+    const nodeList = Array.from(dagPlan.nodes.values())
+      .map(n => `${n.isParallel ? "⟋" : "→"} [${n.agent}] ${n.title}${n.dependencies.length > 0 ? ` (بعد: ${n.dependencies.join(", ")})` : ""}`)
+      .join("\n");
+
+    this.emitStep(taskId, "PLAN",
+      `📊 خطة التنفيذ (${dagPlan.totalNodes} مهمة | نمط DAG):\n${nodeList}\n\n` +
+      `🔀 المهام المتوازية: ${Array.from(dagPlan.nodes.values()).filter(n => n.dependencies.length === 0 && dagPlan.executionOrder[0]?.length > 1).length}`
     );
 
+    await sleep(300);
+
+    // 2) تنفيذ بالتوازي مع DAG
+    this.emitStep(taskId, "ACT", "⚡ بدء التنفيذ المتوازي الذكي...");
+
+    // ربط أحداث المُنفّذ المتوازي
+    const onBatchStart = (d: { batchId: string; nodeIds: string[] }) => {
+      if (d.nodeIds.length > 1) {
+        this.emitStep(taskId, "ACT", `⚡ تنفيذ متوازٍ: ${d.nodeIds.join(" + ")}`);
+      }
+    };
+    const onNodeComplete = (d: { taskId: string; nodeId: string; status: string }) => {
+      if (d.taskId === taskId) {
+        const node = dagPlan.nodes.get(d.nodeId);
+        if (node) {
+          const icon = node.status === "done" ? "✅" : "❌";
+          this.emitStep(taskId, "VERIFY", `${icon} ${node.title}: ${(node.result || node.error || "").substring(0, 150)}`);
+        }
+      }
+    };
+
+    parallelExecutor.on("batchStart", onBatchStart);
+    parallelExecutor.on("nodeComplete", onNodeComplete);
+
+    let allResults: Record<string, string> = {};
+
+    try {
+      allResults = await parallelExecutor.executePlan(
+        taskId,
+        dagPlan,
+        smartChatFn,
+        (nodeId, status, result) => {
+          const node = dagPlan.nodes.get(nodeId);
+          if (node && status === "running") {
+            this.emitStep(taskId, "ACT", `🔄 [${node.agent}] ${node.title}...`);
+          }
+        },
+      );
+    } finally {
+      parallelExecutor.off("batchStart", onBatchStart);
+      parallelExecutor.off("nodeComplete", onNodeComplete);
+    }
+
+    // 3) مرحلة التحقق والمراجعة النهائية
+    this.emitStep(taskId, "OBSERVE", "🔍 وكيل المراجعة يدمج النتائج ويتحقق من الجودة...");
+
+    const successfulResults = Object.entries(allResults)
+      .filter(([, v]) => v && v.length > 10)
+      .map(([k, v]) => `[${k}]: ${v.substring(0, 350)}`)
+      .join('\n\n');
+
+    let finalReview = "";
+
+    if (successfulResults.length > 0) {
+      finalReview = await smartChatFn(
+        [
+          {
+            role: "system",
+            content: `أنت وكيل مراجعة ودمج. مهمتك تجميع نتائج المهام المتوازية في إجابة نهائية متماسكة وشاملة.
+قواعد:
+- ادمج النتائج بشكل منطقي ومنظم
+- أزل التكرار وادمج المعلومات المتشابهة
+- قدّم النتيجة بلغة عربية واضحة مع Markdown
+- تأكد من الإجابة على الهدف الأصلي بالكامل`,
+          },
+          {
+            role: "user",
+            content: `الهدف: ${task.description}\n\nنتائج المهام:\n${successfulResults}\n\nقدّم إجابة نهائية شاملة.`,
+          },
+        ],
+        { temperature: 0.3, max_tokens: 1200 },
+        "REVIEW_MERGE",
+      );
+    } else {
+      finalReview = await smartChatFn(
+        [{ role: "user", content: task.description }],
+        { temperature: 0.4, max_tokens: 900 },
+        "DIRECT_ANSWER",
+      );
+    }
+
     const duration = Date.now() - start;
-    modelSelector.recordResult(model, category, true, duration / 1000, 0.8);
+    const completedCount = Array.from(dagPlan.nodes.values()).filter(n => n.status === "done").length;
+    const successRate = dagPlan.totalNodes > 0 ? (completedCount / dagPlan.totalNodes) : 1;
+
+    modelSelector.recordResult(model, category, successRate > 0.5, duration / 1000, successRate);
 
     try {
       const taskData = taskStore.getTask(taskId);
-      const actionSteps = (taskData?.steps || []).slice(0, 8).map((s: any) => `${s.step}: ${s.content.substring(0, 60)}`);
-      learningEngine.learnStrategy(task.description, actionSteps, true);
-      learningEngine.recordTaskOutcome(true);
+      const actionSteps = (taskData?.steps || []).slice(0, 8).map((s: Record<string, string>) => `${s.step}: ${s.content?.substring(0, 60)}`);
+      learningEngine.learnStrategy(task.description, actionSteps, successRate > 0.5);
+      learningEngine.recordTaskOutcome(successRate > 0.5);
     } catch {}
 
-    techIntelligence.onTaskEnd(taskId, true);
+    techIntelligence.onTaskEnd(taskId, successRate > 0.5);
     taskStore.updateTask(taskId, { status: "completed", result: finalReview });
-    taskStore.addLog({ taskId, agentType: "MultiAgent", action: "task_complete", output: finalReview.substring(0, 300), durationMs: duration });
+    taskStore.addLog({
+      taskId,
+      agentType: "DAG+Parallel",
+      action: "task_complete",
+      output: finalReview.substring(0, 300),
+      durationMs: duration,
+    });
     this.emit("taskSuccess", { taskId, result: finalReview });
+  }
+
+  private async runDirectResponse(
+    task: Task,
+    start: number,
+    model: string,
+    category: string,
+    enrichedDescription: string,
+  ): Promise<void> {
+    const taskId = task.taskId;
+    this.emitStep(taskId, "THINK", "💬 استجابة مباشرة...");
+
+    const systemPrompt = SYSTEM_PROMPTS[category] || SYSTEM_PROMPTS.default;
+    const result = await smartChat(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: enrichedDescription },
+      ],
+      { temperature: 0.4, max_tokens: 1200, model },
+      "DIRECT",
+    );
+
+    const duration = Date.now() - start;
+    modelSelector.recordResult(model, category, true, duration / 1000, 0.9);
+    techIntelligence.onTaskEnd(taskId, true);
+    taskStore.updateTask(taskId, { status: "completed", result });
+    taskStore.addLog({ taskId, agentType: "DirectResponse", action: "task_complete", output: result.substring(0, 300), durationMs: duration });
+    this.emit("taskSuccess", { taskId, result });
   }
 
   private shouldUsePythonAgent(category: string): boolean {
